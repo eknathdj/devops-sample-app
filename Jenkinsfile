@@ -18,6 +18,17 @@ pipeline {
     }
     
     stages {
+        stage('Setup Git Config') {
+            steps {
+                echo 'Configuring Git safe directory...'
+                sh '''
+                    git config --global --add safe.directory '*'
+                    git config --global user.email "jenkins@example.com"
+                    git config --global user.name "Jenkins CI"
+                '''
+            }
+        }
+        
         stage('Cleanup Workspace') {
             steps {
                 echo 'Cleaning workspace...'
@@ -76,7 +87,9 @@ pipeline {
                 script {
                     // Update your k8s manifests with new image tag
                     sh """
+                        # Update the deployment file with new image tag
                         sed -i 's|image: ${DOCKER_IMAGE}:.*|image: ${DOCKER_IMAGE}:${DOCKER_TAG}|g' environments/staging/deployment.yaml
+                        echo "Updated manifest:"
                         cat environments/staging/deployment.yaml
                     """
                 }
@@ -91,11 +104,24 @@ pipeline {
                                                       usernameVariable: 'GIT_USERNAME', 
                                                       passwordVariable: 'GIT_PASSWORD')]) {
                         sh """
+                            # Configure Git
                             git config user.email "jenkins@example.com"
                             git config user.name "Jenkins CI"
+                            
+                            # Checkout main branch (fix detached HEAD)
+                            git checkout main
+                            git pull origin main
+                            
+                            # Add the modified file
                             git add environments/staging/deployment.yaml
-                            git commit -m "Update image to ${DOCKER_IMAGE}:${DOCKER_TAG}" || echo "No changes to commit"
-                            git push https://${GIT_USERNAME}:${GIT_PASSWORD}@github.com/eknathdj/devops-sample-app.git HEAD:main
+                            
+                            # Only commit and push if there are changes
+                            if git diff --staged --quiet; then
+                                echo "No changes to commit"
+                            else
+                                git commit -m "Update image to ${DOCKER_IMAGE}:${DOCKER_TAG}"
+                                git push https://${GIT_USERNAME}:${GIT_PASSWORD}@github.com/eknathdj/devops-sample-app.git main
+                            fi
                         """
                     }
                 }
