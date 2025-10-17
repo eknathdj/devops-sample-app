@@ -93,7 +93,7 @@ pipeline {
                         sh """
                             git config user.email "jenkins@example.com"
                             git config user.name "Jenkins CI"
-                            git add k8s/deployment.yaml
+                            git add environments/staging/deployment.yaml
                             git commit -m "Update image to ${DOCKER_IMAGE}:${DOCKER_TAG}" || echo "No changes to commit"
                             git push https://${GIT_USERNAME}:${GIT_PASSWORD}@github.com/eknathdj/devops-sample-app.git HEAD:main
                         """
