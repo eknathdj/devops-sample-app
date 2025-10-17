@@ -2,57 +2,130 @@ pipeline {
     agent any
     
     environment {
-        // CHANGE THIS TO YOUR DOCKER HUB USERNAME
-        DOCKER_REGISTRY = 'eknathdj' 
-        DOCKER_IMAGE = "${DOCKER_REGISTRY}/sample-app:${BUILD_NUMBER}"
-        GIT_REPO = 'https://github.com/eknathdj/devops-sample-app.git'
-        // REMOVE OR CHANGE THIS LINE
-        // GIT_CREDENTIALS_ID = 'git-creds' 
+        DOCKER_IMAGE = "eknathdj/devops-sample-app"
+        DOCKER_TAG = "${BUILD_NUMBER}"
+        DOCKER_CREDENTIALS_ID = "dockerhub-creds"
+        GIT_CREDENTIALS_ID = "github-creds"
+    }
+    
+    options {
+        // Skip the default SCM checkout
+        skipDefaultCheckout(true)
+        // Keep only last 10 builds
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+        // Timeout after 30 minutes
+        timeout(time: 30, unit: 'MINUTES')
     }
     
     stages {
+        stage('Cleanup Workspace') {
+            steps {
+                echo 'Cleaning workspace...'
+                cleanWs()
+            }
+        }
+        
         stage('Checkout') {
             steps {
-                git branch: 'main', url: env.GIT_REPO, credentialsId: env.GIT_CREDENTIALS_ID
+                echo 'Checking out source code...'
+                checkout scm
+                sh 'git status'
+                sh 'ls -la'
             }
         }
         
         stage('Build Docker Image') {
             steps {
+                echo 'Building Docker image...'
                 script {
-                    docker.build(env.DOCKER_IMAGE)
+                    dockerImage = docker.build("${DOCKER_IMAGE}:${DOCKER_TAG}")
+                    // Also tag as latest
+                    dockerImage.tag("latest")
                 }
             }
         }
         
-        stage('Push Docker Image') {
+        stage('Test') {
             steps {
+                echo 'Running tests...'
                 script {
-                    docker.withRegistry("https://${env.DOCKER_REGISTRY}", 'docker-registry-creds') {
-                        docker.image(env.DOCKER_IMAGE).push()
+                    // Add your test commands here
+                    // Example: docker.image("${DOCKER_IMAGE}:${DOCKER_TAG}").inside {
+                    //     sh 'npm test'
+                    // }
+                    echo 'Tests passed successfully'
+                }
+            }
+        }
+        
+        stage('Push to DockerHub') {
+            steps {
+                echo 'Pushing Docker image to DockerHub...'
+                script {
+                    docker.withRegistry('https://registry.hub.docker.com', DOCKER_CREDENTIALS_ID) {
+                        dockerImage.push("${DOCKER_TAG}")
+                        dockerImage.push("latest")
                     }
                 }
             }
         }
         
-        stage('Update Kubernetes Manifests') {
+        stage('Update ArgoCD Manifest') {
             steps {
+                echo 'Updating Kubernetes manifests...'
                 script {
-                    // Update the image tag in the deployment
-                    sh "sed -i 's|image: .*|image: ${env.DOCKER_IMAGE}|' environments/staging/deployment.yaml"
-                    
-                    // Commit and push changes
-                    withCredentials([usernamePassword(credentialsId: env.GIT_CREDENTIALS_ID, usernameVariable: 'GIT_USER', passwordVariable: 'GIT_PASS')]) {
+                    // Update your k8s manifests with new image tag
+                    sh """
+                        sed -i 's|image: ${DOCKER_IMAGE}:.*|image: ${DOCKER_IMAGE}:${DOCKER_TAG}|g' environments/staging/deployment.yaml
+                        cat environments/staging/deployment.yaml
+                    """
+                }
+            }
+        }
+        
+        stage('Commit and Push Manifest Changes') {
+            steps {
+                echo 'Committing manifest changes...'
+                script {
+                    withCredentials([usernamePassword(credentialsId: GIT_CREDENTIALS_ID, 
+                                                      usernameVariable: 'GIT_USERNAME', 
+                                                      passwordVariable: 'GIT_PASSWORD')]) {
                         sh """
-                            git config --global user.name "Jenkins"
-                            git config --global user.email "jenkins@example.com"
-                            git add environments/staging/deployment.yaml
-                            git commit -m "Update image to ${env.DOCKER_IMAGE}"
-                            git push https://${GIT_USER}:${GIT_PASS}@${env.GIT_REPO.replace('https://', '')} HEAD:main
+                            git config user.email "jenkins@example.com"
+                            git config user.name "Jenkins CI"
+                            git add k8s/deployment.yaml
+                            git commit -m "Update image to ${DOCKER_IMAGE}:${DOCKER_TAG}" || echo "No changes to commit"
+                            git push https://${GIT_USERNAME}:${GIT_PASSWORD}@github.com/eknathdj/devops-sample-app.git HEAD:main
                         """
                     }
                 }
             }
+        }
+        
+        stage('Trigger ArgoCD Sync') {
+            steps {
+                echo 'ArgoCD will automatically sync the changes...'
+                // If you have ArgoCD CLI configured, you can force sync:
+                // sh 'argocd app sync sample-app'
+            }
+        }
+    }
+    
+    post {
+        success {
+            echo 'Pipeline completed successfully!'
+            // Add notifications here (Slack, email, etc.)
+        }
+        failure {
+            echo 'Pipeline failed!'
+            // Add failure notifications here
+        }
+        always {
+            echo 'Cleaning up Docker images...'
+            sh """
+                docker rmi ${DOCKER_IMAGE}:${DOCKER_TAG} || true
+                docker rmi ${DOCKER_IMAGE}:latest || true
+            """
         }
     }
 }
