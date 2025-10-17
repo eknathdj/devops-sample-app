@@ -2,7 +2,7 @@ pipeline {
     agent any
     
     environment {
-        DOCKER_REGISTRY = 'docker.io'  // Replace with your registry
+        DOCKER_REGISTRY = 'registry-1.docker.io'  // Replace with your registry
         DOCKER_IMAGE = "${DOCKER_REGISTRY}/sample-app:${BUILD_NUMBER}"
         GIT_REPO = 'https://github.com/eknathdj/devops-sample-app.git'  // Replace with your repo
         GIT_CREDENTIALS_ID = 'git-creds'  // ID of your Git credentials in Jenkins
