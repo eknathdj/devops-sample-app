@@ -136,15 +136,19 @@ pipeline {
                         script {
                             echo "Scanning dependencies for vulnerabilities"
                             sh '''
-                                # Example for Node.js:
-                                # npm audit --audit-level=moderate || true
-                                
-                                # Example for Python:
-                                # safety check || true
-                                
-                                # Example for Go:
-                                # nancy go.sum || true
-                                
+                                # Example dependency scans (uncomment/use as needed)
+                                # npm audit --audit-level=moderate
+                                # safety check
+                                # nancy go.sum
+
+                                # Secret detection using gitleaks (fail pipeline if secrets are detected).
+                                if command -v gitleaks >/dev/null 2>&1; then
+                                    echo "Running gitleaks secret scan..."
+                                    gitleaks detect --source . --redact
+                                else
+                                    echo "gitleaks not found; install gitleaks to enable secret scanning"
+                                fi
+
                                 echo "Dependency scan completed"
                             '''
                         }
@@ -244,13 +248,31 @@ pipeline {
                     )]) {
                         sh """
                             # Login to ArgoCD
-                            argocd login ${ARGOCD_SERVER} --auth-token=${ARGOCD_TOKEN} --insecure
+                            # NOTE: '--insecure' was removed to enforce TLS verification. Ensure the Jenkins agent
+                            # trusts the ArgoCD server certificate. You can provide a CA bundle via credentials
+                            # and point ARGOCD_GRPC_WEB_ROOT_CERTIFICATE (or configure system trust store).
+                            if [ -n "${ARGOCD_CA_BUNDLE}" ]; then
+                                # Example: write CA to a temp file and provide it to argocd if supported by your version
+                                echo "${ARGOCD_CA_BUNDLE}" > /tmp/argocd_ca.pem
+                                export GRPC_WEB_TLS_ROOT_CERT_FILE=/tmp/argocd_ca.pem
+                            fi
+                            argocd login ${ARGOCD_SERVER} --auth-token=${ARGOCD_TOKEN}
                             
-                            # Sync the application
+                            # Sync the application and check exit codes to fail the pipeline on errors
                             argocd app sync product-service --force --prune
-                            
+                            rc=$?
+                            if [ $rc -ne 0 ]; then
+                                echo "ERROR: argocd app sync failed with exit code $rc"
+                                exit $rc
+                            fi
+
                             # Wait for sync to complete
                             argocd app wait product-service --health --timeout 300
+                            rc=$?
+                            if [ $rc -ne 0 ]; then
+                                echo "ERROR: argocd app wait failed with exit code $rc"
+                                exit $rc
+                            fi
                         """
                     }
                 }

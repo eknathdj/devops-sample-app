@@ -130,43 +130,64 @@ data:
   product-service-dashboard.json: |
     {
       "dashboard": {
+        "id": null,
+        "uid": "product-service-dashboard",
         "title": "Product Service Monitoring",
         "tags": ["product-service", "kubernetes"],
         "timezone": "browser",
+        "schemaVersion": 30,
+        "version": 1,
+        "refresh": "30s",
         "panels": [
           {
+            "id": 1,
             "title": "Request Rate",
             "type": "graph",
+            "datasource": "${DS_PROMETHEUS}",
             "targets": [
               {
-                "expr": "sum(rate(http_requests_total{job=\"product-service\"}[5m])) by (status)"
+                "refId": "A",
+                "expr": "sum(rate(http_requests_total{job=\"product-service\"}[5m])) by (status)",
+                "legendFormat": "{{status}}"
               }
             ]
           },
           {
+            "id": 2,
             "title": "Response Time (p95)",
             "type": "graph",
+            "datasource": "${DS_PROMETHEUS}",
             "targets": [
               {
-                "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{job=\"product-service\"}[5m])) by (le))"
+                "refId": "A",
+                "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{job=\"product-service\"}[5m])) by (le))",
+                "legendFormat": "p95"
               }
             ]
           },
           {
+            "id": 3,
             "title": "Error Rate",
             "type": "graph",
+            "datasource": "${DS_PROMETHEUS}",
             "targets": [
               {
-                "expr": "sum(rate(http_requests_total{job=\"product-service\", status=~\"5..\"}[5m]))"
+                "refId": "A",
+                "expr": "sum(rate(http_requests_total{job=\"product-service\", status=~\"5..\"}[5m]))",
+                "legendFormat": "errors"
               }
             ]
           },
           {
+            "id": 4,
             "title": "Pod Status",
             "type": "stat",
+            "datasource": "${DS_PROMETHEUS}",
             "targets": [
               {
-                "expr": "kube_deployment_status_replicas_available{deployment=\"product-service\"}"
+                "refId": "A",
+                "expr": "kube_deployment_status_replicas_available{deployment=\"product-service\"}",
+                "legendFormat": "available"
               }
             ]
           }

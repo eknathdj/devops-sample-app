@@ -51,6 +51,37 @@ check_prerequisites() {
     log_info "Prerequisites check passed ✓"
 }
 
+# Prompt helper that is safe for non-interactive environments.
+# Usage: ask_prompt VAR_NAME "Prompt message" [default]
+ask_prompt() {
+    local _var_name="$1"; shift
+    local _prompt="$1"; shift
+    local _default="$1"
+
+    # If running non-interactive, allow override via PRESET_ANSWER or SKIP_PROMPTS
+    if ! test -t 0; then
+        if [ -n "$PRESET_ANSWER" ]; then
+            printf -v "${_var_name}" '%s' "$PRESET_ANSWER"
+            return 0
+        fi
+        if [ "${SKIP_PROMPTS}" = "true" ]; then
+            if [ -n "$_default" ]; then
+                printf -v "${_var_name}" '%s' "$_default"
+                return 0
+            fi
+        fi
+        log_error "Non-interactive shell: prompt '$_prompt' cannot be answered. Set PRESET_ANSWER or SKIP_PROMPTS=true to proceed."
+        exit 1
+    fi
+
+    # Interactive read
+    read -p "${_prompt}" _reply
+    if [ -z "$_reply" ] && [ -n "$_default" ]; then
+        _reply="$_default"
+    fi
+    printf -v "${_var_name}" '%s' "$_reply"
+}
+
 create_namespace() {
     log_info "Creating namespace: $NAMESPACE"
     
@@ -73,7 +104,7 @@ deploy_secrets() {
     
     # Warn about default secrets
     log_warn "Make sure you've updated secrets with real values!"
-    read -p "Have you updated the secrets? (yes/no): " answer
+    ask_prompt answer "Have you updated the secrets? (yes/no): " "no"
     if [ "$answer" != "yes" ]; then
         log_error "Please update secrets before deploying"
         exit 1
@@ -118,8 +149,13 @@ deploy_application() {
     # Check if image is set
     if grep -q "eknathdj/product-service" k8s/product-service/04-app-deployment.yaml; then
         log_warn "Default image detected. Please update the image in deployment.yaml"
-        read -p "Image registry/name: " image_name
-        sed -i "s|eknathdj/product-service:latest|$image_name|g" k8s/product-service/04-app-deployment.yaml
+        ask_prompt image_name "Image registry/name: " "eknathdj/product-service:v1.2.3"
+        # Use sed with a predictable backup to avoid corrupting the original on failure
+        sed -i.bak "s|eknathdj/product-service:latest|${image_name}|g" k8s/product-service/04-app-deployment.yaml
+        if [ $? -ne 0 ]; then
+            log_error "Failed to update image in k8s/product-service/04-app-deployment.yaml"
+            exit 1
+        fi
     fi
     
     kubectl apply -f k8s/product-service/04-app-deployment.yaml
@@ -130,19 +166,23 @@ deploy_application() {
     log_info "Application deployed ✓"
 }
 
-# deploy_ingress() {
-#     log_info "Deploying ingress..."
-    
-#     # Check if domain is set
-#     if grep -q "yourdomain.com" k8s/product-service/05-ingress.yaml; then
-#         log_warn "Default domain detected. Please update the domain in ingress.yaml"
-#         read -p "Your domain: " domain
-#         sed -i "s|yourdomain.com|$domain|g" k8s/product-service/05-ingress.yaml
-#     fi
-    
-#     kubectl apply -f k8s/product-service/05-ingress.yaml
-#     log_info "Ingress deployed ✓"
-# }
+deploy_ingress() {
+    log_info "Deploying ingress..."
+
+    # Check if domain is set
+    if grep -q "yourdomain.com" k8s/product-service/05-ingress.yaml; then
+        log_warn "Default domain detected. Please update the domain in ingress.yaml"
+        ask_prompt domain "Your domain: " "example.com"
+        sed -i.bak "s|yourdomain.com|${domain}|g" k8s/product-service/05-ingress.yaml
+        if [ $? -ne 0 ]; then
+            log_error "Failed to update domain in k8s/product-service/05-ingress.yaml"
+            exit 1
+        fi
+    fi
+
+    kubectl apply -f k8s/product-service/05-ingress.yaml
+    log_info "Ingress deployed ✓"
+}
 
 deploy_monitoring() {
     log_info "Deploying monitoring configuration..."
@@ -187,8 +227,20 @@ setup_argocd() {
     kubectl apply -f argocd/product-service-app.yaml
     
     log_info "Syncing ArgoCD application..."
-    argocd app sync product-service --force
-    argocd app wait product-service --health --timeout 300
+    # Run argocd app sync and check exit status to avoid masking failures
+    ${ARGOCD} app sync product-service --force
+    rc=$?
+    if [ $rc -ne 0 ]; then
+        log_error "argocd app sync product-service failed with exit code $rc"
+        exit 1
+    fi
+
+    ${ARGOCD} app wait product-service --health --timeout 300
+    rc=$?
+    if [ $rc -ne 0 ]; then
+        log_error "argocd app wait product-service failed with exit code $rc"
+        exit 1
+    fi
     
     log_info "ArgoCD setup complete ✓"
 }
@@ -237,7 +289,7 @@ rollback() {
 cleanup() {
     log_warn "Cleaning up all resources..."
     
-    read -p "Are you sure you want to delete everything? (yes/no): " answer
+    ask_prompt answer "Are you sure you want to delete everything? (yes/no): " "no"
     if [ "$answer" != "yes" ]; then
         log_info "Cleanup cancelled"
         return
@@ -279,7 +331,7 @@ main() {
         # Interactive mode
         while true; do
             show_menu
-            read -p "Select an option: " choice
+            ask_prompt choice "Select an option: " "0"
             
             case $choice in
                 1)

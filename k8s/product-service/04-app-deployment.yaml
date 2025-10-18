@@ -48,8 +48,9 @@ spec:
         command: ['sh', '-c', 'until nc -z postgres-service 5432; do echo waiting for postgres; sleep 2; done;']
       containers:
       - name: product-service
-        image: eknathdj/product-service:latest  # Update with your image
-        imagePullPolicy: Always
+        # Use an immutable tag or CI-injected variable. Replace {{ .VERSION }} during CI/CD.
+        image: eknathdj/product-service:{{ .VERSION | default "v1.2.3" }}
+        imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 8080
           name: http

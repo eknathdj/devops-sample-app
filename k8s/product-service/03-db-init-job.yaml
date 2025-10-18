@@ -129,6 +129,9 @@ spec:
             secretKeyRef:
               name: postgres-secret
               key: POSTGRES_USER
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 1000
       containers:
       - name: migrate
         image: postgres:15-alpine
@@ -176,6 +179,9 @@ spec:
         - name: init-scripts
           mountPath: /docker-entrypoint-initdb.d
           readOnly: true
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 1000
       volumes:
       - name: init-scripts
         configMap:
