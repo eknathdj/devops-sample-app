@@ -9,6 +9,7 @@ metadata:
     app: product-service
     release: prometheus
 spec:
+  jobLabel: app
   selector:
     matchLabels:
       app: product-service

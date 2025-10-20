@@ -43,24 +43,26 @@ subjects:
   name: product-service-sa
   namespace: product-service
 ---
-# ClusterRole for ArgoCD to manage product-service namespace
+# Role for ArgoCD to manage product-service namespace
 apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
+kind: Role
 metadata:
   name: argocd-product-service-manager
+  namespace: product-service
 rules:
-- apiGroups: ["*"]
+- apiGroups: ["", "apps", "batch", "networking.k8s.io", "monitoring.coreos.com", "autoscaling", "policy", "rbac.authorization.k8s.io"]
   resources: ["*"]
-  verbs: ["*"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 ---
-# ClusterRoleBinding for ArgoCD
+# RoleBinding for ArgoCD
 apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
+kind: RoleBinding
 metadata:
   name: argocd-product-service-manager-binding
+  namespace: product-service
 roleRef:
   apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
+  kind: Role
   name: argocd-product-service-manager
 subjects:
 - kind: ServiceAccount
@@ -101,41 +103,3 @@ subjects:
 - kind: ServiceAccount
   name: jenkins
   namespace: jenkins  # Adjust based on your Jenkins namespace
----
-# PodSecurityPolicy (if using PSP - deprecated in K8s 1.25+)
-# NOTE: PodSecurityPolicy (PSP) is deprecated and removed in Kubernetes 1.26+.
-# Migration guidance:
-# 1. PSP removal timeline: PSP was deprecated in 1.21 and removed in 1.25/1.26 depending on distribution.
-# 2. Recommended migration: adopt Pod Security Standards (PSS) by labeling namespaces with the desired
-#    policy level, for example:
-#      kubectl label --overwrite namespace product-service pod-security.kubernetes.io/enforce=baseline
-#      kubectl label --overwrite namespace product-service pod-security.kubernetes.io/enforce-version=v1.24
-#    See: https://kubernetes.io/docs/concepts/security/pod-security-standards/
-# 3. Fallback: keep PSP only for older clusters during your migration window and remove this manifest
-#    once all clusters run a Kubernetes version that has PSS enabled. Track the removal plan in project docs.
-apiVersion: policy/v1beta1
-kind: PodSecurityPolicy
-metadata:
-  name: product-service-psp
-spec:
-  privileged: false
-  allowPrivilegeEscalation: false
-  requiredDropCapabilities:
-    - ALL
-  volumes:
-    - 'configMap'
-    - 'emptyDir'
-    - 'projected'
-    - 'secret'
-    - 'downwardAPI'
-    - 'persistentVolumeClaim'
-  hostNetwork: false
-  hostIPC: false
-  hostPID: false
-  runAsUser:
-    rule: 'MustRunAsNonRoot'
-  seLinux:
-    rule: 'RunAsAny'
-  fsGroup:
-    rule: 'RunAsAny'
-  readOnlyRootFilesystem: false

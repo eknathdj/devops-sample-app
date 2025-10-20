@@ -13,17 +13,6 @@ spec:
       storage: 10Gi
   storageClassName: standard  # Adjust based on your cluster
 ---
-# PostgreSQL ConfigMap
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: postgres-config
-  namespace: product-service
-data:
-  POSTGRES_HOST: postgres-service
-  POSTGRES_PORT: "5432"
-  POSTGRES_MAX_CONNECTIONS: "100"
----
 # PostgreSQL Deployment
 apiVersion: apps/v1
 kind: Deployment
@@ -46,6 +35,8 @@ spec:
         app: postgres
         tier: database
     spec:
+      securityContext:
+        fsGroup: 999
       containers:
       - name: postgres
         image: postgres:15-alpine
@@ -74,6 +65,13 @@ spec:
         volumeMounts:
         - name: postgres-storage
           mountPath: /var/lib/postgresql/data
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 999
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+              - ALL
         resources:
           requests:
             memory: "256Mi"
@@ -84,18 +82,18 @@ spec:
         livenessProbe:
           exec:
             command:
-            - pg_isready
-            - -U
-            - $(POSTGRES_USER)
+            - /bin/sh
+            - -c
+            - pg_isready -U "$POSTGRES_USER"
           initialDelaySeconds: 30
           periodSeconds: 10
           timeoutSeconds: 5
         readinessProbe:
           exec:
             command:
-            - pg_isready
-            - -U
-            - $(POSTGRES_USER)
+            - /bin/sh
+            - -c
+            - pg_isready -U "$POSTGRES_USER"
           initialDelaySeconds: 5
           periodSeconds: 5
           timeoutSeconds: 3

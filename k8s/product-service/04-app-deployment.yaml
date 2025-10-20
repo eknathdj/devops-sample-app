@@ -189,13 +189,6 @@ spec:
   selector:
     app: product-service
 ---
-# Service Account
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: product-service-sa
-  namespace: product-service
----
 # HorizontalPodAutoscaler
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
