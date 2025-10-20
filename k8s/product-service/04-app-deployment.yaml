@@ -45,7 +45,7 @@ spec:
       initContainers:
       - name: wait-for-db
         image: busybox:1.35
-        command: ['sh', '-c', 'until nc -z postgres-service.default.svc.cluster.local 5432; do echo waiting for postgres; sleep 2; done;']
+        command: ['sh', '-c', 'until nc -z postgres-service 5432; do echo waiting for postgres; sleep 2; done;']
       containers:
       - name: product-service
         # Use an immutable tag or CI-injected variable. Replace {{ .VERSION }} during CI/CD.

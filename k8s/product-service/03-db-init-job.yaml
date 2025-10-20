@@ -133,7 +133,7 @@ spec:
           runAsNonRoot: true
           runAsUser: 1000
       containers:
-      - name: migrate
+      - name: db-migration
         image: postgres:15-alpine
         command:
           - sh
@@ -154,27 +154,9 @@ spec:
             done
             
             echo "Database migration completed successfully!"
-        env:
-        - name: POSTGRES_USER
-          valueFrom:
-            secretKeyRef:
-              name: postgres-secret
-              key: POSTGRES_USER
-        - name: POSTGRES_PASSWORD
-          valueFrom:
-            secretKeyRef:
-              name: postgres-secret
-              key: POSTGRES_PASSWORD
-        - name: POSTGRES_DB
-          valueFrom:
-            secretKeyRef:
-              name: postgres-secret
-              key: POSTGRES_DB
-        - name: PGPASSWORD
-          valueFrom:
-            secretKeyRef:
-              name: postgres-secret
-              key: POSTGRES_PASSWORD
+        envFrom:
+        - secretRef:
+            name: postgres-secret
         volumeMounts:
         - name: init-scripts
           mountPath: /docker-entrypoint-initdb.d
