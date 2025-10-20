@@ -132,6 +132,7 @@ spec:
         securityContext:
           runAsNonRoot: true
           runAsUser: 1000
+          allowPrivilegeEscalation: false
       containers:
       - name: db-migration
         image: postgres:15-alpine
@@ -182,6 +183,7 @@ spec:
         securityContext:
           runAsNonRoot: true
           runAsUser: 1000
+          allowPrivilegeEscalation: false
       volumes:
       - name: init-scripts
         configMap:

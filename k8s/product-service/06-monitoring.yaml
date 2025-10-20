@@ -77,8 +77,8 @@ spec:
     # Database connection issues
     - alert: DatabaseConnectionFailure
       expr: |
-        rate(db_connection_errors_total{service="product-service"}[5m]) > 0
-      for: 2m
+        ceil(rate(db_connection_errors_total{service="product-service"}[5m])) > 1
+      for: 5m
       labels:
         severity: critical
         service: product-service
@@ -105,11 +105,11 @@ spec:
     # High CPU usage
     - alert: HighCPUUsage
       expr: |
-        (
-          rate(container_cpu_usage_seconds_total{namespace="product-service", pod=~"product-service-.*"}[5m])
+        100 * (
+          sum(rate(container_cpu_usage_seconds_total{namespace="product-service", pod=~"product-service-.*", container!=""}[5m])) by (namespace,pod)
           /
-          container_spec_cpu_quota{namespace="product-service", pod=~"product-service-.*"}
-        ) > 0.8
+          sum(kube_pod_container_resource_limits_cpu_cores{namespace="product-service", pod=~"product-service-.*"}) by (namespace,pod)
+        ) > 80
       for: 5m
       labels:
         severity: warning
