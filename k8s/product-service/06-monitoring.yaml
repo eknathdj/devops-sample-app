@@ -1,4 +1,4 @@
----
+﻿---
 # ServiceMonitor for Prometheus (if using Prometheus Operator)
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
@@ -28,9 +28,6 @@ metadata:
     app: product-service
     prometheus: kube-prometheus
 spec:
-  podSelector:
-    matchLabels:
-      app: product-service
   groups:
   - name: product-service
     interval: 30s
