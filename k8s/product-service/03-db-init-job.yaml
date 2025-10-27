@@ -109,7 +109,7 @@ metadata:
     app: product-service
     component: db-schema
 spec:
-  backoffLimit: 3
+  backoffLimit: 5
   ttlSecondsAfterFinished: 300
   template:
     metadata:
@@ -220,7 +220,7 @@ metadata:
     app: product-service
     component: db-seed
 spec:
-  backoffLimit: 3
+  backoffLimit: 5
   ttlSecondsAfterFinished: 300
   template:
     metadata:
