@@ -55,11 +55,6 @@ spec:
       - name: postgres
         image: postgres:15-alpine
         imagePullPolicy: IfNotPresent
-        command:
-          - postgres
-        args:
-          - -c
-          - config_file=/etc/postgresql/postgresql.conf
         ports:
         - containerPort: 5432
           name: postgres
@@ -82,9 +77,6 @@ spec:
         volumeMounts:
         - name: postgres-storage
           mountPath: /var/lib/postgresql/data
-        - name: postgres-config
-          mountPath: /etc/postgresql/postgresql.conf
-          subPath: postgresql.conf
         securityContext:
           runAsNonRoot: true
           runAsUser: 999
@@ -117,10 +109,6 @@ spec:
           initialDelaySeconds: 5
           periodSeconds: 5
           timeoutSeconds: 3
-      volumes:
-      - name: postgres-config
-        configMap:
-          name: postgres-config
   volumeClaimTemplates:
   - metadata:
       name: postgres-storage
