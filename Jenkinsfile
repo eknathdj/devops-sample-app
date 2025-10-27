@@ -88,9 +88,9 @@ pipeline {
                     // Update your k8s manifests with new image tag
                     sh """
                         # Update the deployment file with new image tag
-                        sed -i 's|image: ${DOCKER_IMAGE}:.*|image: ${DOCKER_IMAGE}:${DOCKER_TAG}|g' environments/staging/deployment.yaml
+                        sed -i 's|image: eknathdj/product-service:.*|image: ${DOCKER_IMAGE}:${DOCKER_TAG}|g' k8s/product-service/04-app-deployment.yaml
                         echo "Updated manifest:"
-                        cat environments/staging/deployment.yaml
+                        cat k8s/product-service/04-app-deployment.yaml
                     """
                 }
             }
@@ -113,7 +113,7 @@ pipeline {
                             git pull origin main
                             
                             # Add the modified file
-                            git add environments/staging/deployment.yaml
+                            git add k8s/product-service/04-app-deployment.yaml
                             
                             # Only commit and push if there are changes
                             if git diff --staged --quiet; then

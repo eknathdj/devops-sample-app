@@ -48,8 +48,8 @@ spec:
         command: ['sh', '-c', 'until nc -z postgres-service 5432; do echo waiting for postgres; sleep 2; done;']
       containers:
       - name: product-service
-        # Use an immutable tag or CI-injected variable. Replace {{ .VERSION }} during CI/CD.
-        image: eknathdj/product-service:{{ .VERSION }}
+        # Jenkins will update this tag automatically on each build
+        image: eknathdj/devops-sample-app:latest
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 8080
