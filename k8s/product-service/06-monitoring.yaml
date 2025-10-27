@@ -1,0 +1,399 @@
+﻿---
+# ServiceMonitor for Prometheus (if using Prometheus Operator)
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: product-service-metrics
+  namespace: product-service
+  labels:
+    app: product-service
+    release: prometheus
+spec:
+  jobLabel: app
+  selector:
+    matchLabels:
+      app: product-service
+  endpoints:
+  - port: metrics
+    interval: 30s
+    path: /metrics
+---
+# PrometheusRule for Alerting
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: product-service-alerts
+  namespace: product-service
+  labels:
+    app: product-service
+    prometheus: kube-prometheus
+spec:
+  podSelector:
+    matchLabels:
+      app: product-service
+  groups:
+  - name: product-service
+    interval: 30s
+    rules:
+    # SLO-based Error Budget Alerts
+    - alert: ErrorBudgetBurnRateHigh
+      expr: |
+        rate(http_requests_total{job="product-service", status=~"5.."}[30m])
+        /
+        rate(http_requests_total{job="product-service"}[30m])
+        > 0.02
+      for: 10m
+      labels:
+        severity: warning
+        service: product-service
+      annotations:
+        summary: "Error budget burning too fast"
+        description: "Error rate is {{ $value | humanizePercentage }} - burning error budget quickly"
+
+    - alert: ErrorBudgetExhausted
+      expr: |
+        rate(http_requests_total{job="product-service", status=~"5.."}[1h])
+        /
+        rate(http_requests_total{job="product-service"}[1h])
+        > 0.05
+      for: 5m
+      labels:
+        severity: critical
+        service: product-service
+      annotations:
+        summary: "Error budget exhausted"
+        description: "Error rate is {{ $value | humanizePercentage }} - SLO violated"
+
+    # Latency SLO Alerts
+    - alert: LatencySLOViolation
+      expr: |
+        histogram_quantile(0.95,
+          sum(rate(http_request_duration_seconds_bucket{job="product-service"}[10m])) by (le)
+        ) > 0.5
+      for: 5m
+      labels:
+        severity: warning
+        service: product-service
+      annotations:
+        summary: "Latency SLO violated"
+        description: "95th percentile latency is {{ $value }}s (target: 500ms)"
+
+    # Availability Alerts
+    - alert: ServiceDown
+      expr: |
+        up{job="product-service"} == 0
+      for: 1m
+      labels:
+        severity: critical
+        service: product-service
+      annotations:
+        summary: "Product service is down"
+        description: "No instances of product-service are reporting metrics"
+
+    # Pod Health Alerts
+    - alert: InsufficientReplicas
+      expr: |
+        kube_deployment_status_replicas_available{deployment="product-service"}
+        / kube_deployment_spec_replicas{deployment="product-service"}
+        < 0.75
+      for: 5m
+      labels:
+        severity: critical
+        service: product-service
+      annotations:
+        summary: "Insufficient replicas available"
+        description: "Only {{ $value | humanizePercentage }} of expected replicas are available"
+
+    # Database-specific alerts
+    - alert: DatabaseConnectionPoolExhausted
+      expr: |
+        rate(db_connections_total{state="idle", service="product-service"}[5m]) < 1
+      for: 2m
+      labels:
+        severity: critical
+        service: product-service
+      annotations:
+        summary: "Database connection pool exhausted"
+        description: "No idle database connections available"
+
+    - alert: DatabaseSlowQueries
+      expr: |
+        rate(db_query_duration_seconds{quantile="0.95", service="product-service"}[5m]) > 2
+      for: 5m
+      labels:
+        severity: warning
+        service: product-service
+      annotations:
+        summary: "Slow database queries detected"
+        description: "95th percentile query time is {{ $value }}s"
+
+    # Resource Alerts with SLO context
+    - alert: MemoryUsageHigh
+      expr: |
+        (
+          container_memory_working_set_bytes{namespace="product-service", pod=~"product-service-.*"}
+          /
+          container_spec_memory_limit_bytes{namespace="product-service", pod=~"product-service-.*"}
+        ) > 0.85
+      for: 10m
+      labels:
+        severity: warning
+        service: product-service
+      annotations:
+        summary: "High memory usage approaching limit"
+        description: "Memory usage is {{ $value | humanizePercentage }} for {{ $labels.pod }}"
+
+    - alert: CPUThrottlingHigh
+      expr: |
+        rate(container_cpu_cfs_throttled_seconds_total{namespace="product-service", pod=~"product-service-.*"}[5m])
+        /
+        rate(container_cpu_usage_seconds_total{namespace="product-service", pod=~"product-service-.*"}[5m])
+        > 0.1
+      for: 5m
+      labels:
+        severity: warning
+        service: product-service
+      annotations:
+        summary: "High CPU throttling detected"
+        description: "CPU throttling rate is {{ $value | humanizePercentage }} for {{ $labels.pod }}"
+
+    # Business Logic Alerts
+    - alert: LowInventoryAlert
+      expr: |
+        product_inventory_total{product_id=~".+", service="product-service"} < 10
+      for: 1m
+      labels:
+        severity: info
+        service: product-service
+      annotations:
+        summary: "Low inventory detected"
+        description: "Product {{ $labels.product_id }} has low inventory: {{ $value }}"
+
+    - alert: OrderProcessingBacklog
+      expr: |
+        order_queue_length{service="product-service"} > 100
+      for: 2m
+      labels:
+        severity: warning
+        service: product-service
+      annotations:
+        summary: "Order processing backlog detected"
+        description: "Order queue length is {{ $value }} - processing may be delayed"
+
+---
+# Grafana Dashboard ConfigMap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: product-service-dashboard
+  namespace: product-service
+  labels:
+    grafana_dashboard: "1"
+data:
+  product-service-dashboard.json: |
+    {
+      "dashboard": {
+        "id": null,
+        "uid": "product-service-dashboard",
+        "title": "Product Service Monitoring",
+        "tags": ["product-service", "kubernetes"],
+        "timezone": "browser",
+        "schemaVersion": 30,
+        "version": 1,
+        "refresh": "30s",
+        "panels": [
+          {
+            "id": 1,
+            "title": "Request Rate & Error Budget",
+            "type": "graph",
+            "datasource": "${DS_PROMETHEUS}",
+            "targets": [
+              {
+                "refId": "A",
+                "expr": "sum(rate(http_requests_total{job=\"product-service\"}[5m])) by (status)",
+                "legendFormat": "Status {{status}}"
+              },
+              {
+                "refId": "B",
+                "expr": "sum(rate(http_requests_total{job=\"product-service\", status!~\"5..\"}[5m]))",
+                "legendFormat": "Successful Requests"
+              }
+            ]
+          },
+          {
+            "id": 2,
+            "title": "Latency SLO (p50/p95/p99)",
+            "type": "graph",
+            "datasource": "${DS_PROMETHEUS}",
+            "targets": [
+              {
+                "refId": "A",
+                "expr": "histogram_quantile(0.50, sum(rate(http_request_duration_seconds_bucket{job=\"product-service\"}[5m])) by (le))",
+                "legendFormat": "p50"
+              },
+              {
+                "refId": "B",
+                "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{job=\"product-service\"}[5m])) by (le))",
+                "legendFormat": "p95"
+              },
+              {
+                "refId": "C",
+                "expr": "histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket{job=\"product-service\"}[5m])) by (le))",
+                "legendFormat": "p99"
+              }
+            ]
+          },
+          {
+            "id": 3,
+            "title": "Error Rate %",
+            "type": "stat",
+            "datasource": "${DS_PROMETHEUS}",
+            "targets": [
+              {
+                "refId": "A",
+                "expr": "100 * (sum(rate(http_requests_total{job=\"product-service\", status=~\"5..\"}[5m])) / sum(rate(http_requests_total{job=\"product-service\"}[5m])))",
+                "legendFormat": "Error Rate %"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "color": {"mode": "thresholds"},
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {"color": "green", "value": null},
+                    {"color": "yellow", "value": 2},
+                    {"color": "red", "value": 5}
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "id": 4,
+            "title": "Service Availability",
+            "type": "stat",
+            "datasource": "${DS_PROMETHEUS}",
+            "targets": [
+              {
+                "refId": "A",
+                "expr": "up{job=\"product-service\"}",
+                "legendFormat": "Service Up"
+              }
+            ]
+          },
+          {
+            "id": 5,
+            "title": "Pod Resource Usage",
+            "type": "table",
+            "datasource": "${DS_PROMETHEUS}",
+            "targets": [
+              {
+                "refId": "A",
+                "expr": "100 * (container_memory_working_set_bytes{namespace=\"product-service\", pod=~\"product-service-.*\"} / container_spec_memory_limit_bytes{namespace=\"product-service\", pod=~\"product-service-.*\"})",
+                "legendFormat": "Memory Usage %"
+              },
+              {
+                "refId": "B",
+                "expr": "100 * (rate(container_cpu_usage_seconds_total{namespace=\"product-service\", pod=~\"product-service-.*\", container!=\"\"}[5m]) / kube_pod_container_resource_limits_cpu_cores{namespace=\"product-service\", pod=~\"product-service-.*\"})",
+                "legendFormat": "CPU Usage %"
+              }
+            ]
+          },
+          {
+            "id": 6,
+            "title": "Database Connections",
+            "type": "graph",
+            "datasource": "${DS_PROMETHEUS}",
+            "targets": [
+              {
+                "refId": "A",
+                "expr": "db_connections_active{service=\"product-service\"}",
+                "legendFormat": "Active Connections"
+              },
+              {
+                "refId": "B",
+                "expr": "db_connections_idle{service=\"product-service\"}",
+                "legendFormat": "Idle Connections"
+              },
+              {
+                "refId": "C",
+                "expr": "db_connections_total{service=\"product-service\"}",
+                "legendFormat": "Total Connections"
+              }
+            ]
+          },
+          {
+            "id": 7,
+            "title": "Business Metrics",
+            "type": "graph",
+            "datasource": "${DS_PROMETHEUS}",
+            "targets": [
+              {
+                "refId": "A",
+                "expr": "rate(order_created_total{service=\"product-service\"}[5m])",
+                "legendFormat": "Orders/min"
+              },
+              {
+                "refId": "B",
+                "expr": "rate(product_view_total{service=\"product-service\"}[5m])",
+                "legendFormat": "Product Views/min"
+              },
+              {
+                "refId": "C",
+                "expr": "avg(product_inventory_total{service=\"product-service\"})",
+                "legendFormat": "Avg Inventory"
+              }
+            ]
+          },
+          {
+            "id": 8,
+            "title": "Error Budget Burn Rate",
+            "type": "stat",
+            "datasource": "${DS_PROMETHEUS}",
+            "targets": [
+              {
+                "refId": "A",
+                "expr": "(rate(http_requests_total{job=\"product-service\", status=~\"5..\"}[30m]) / rate(http_requests_total{job=\"product-service\"}[30m])) * 100",
+                "legendFormat": "Error Budget Burn Rate %"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "color": {"mode": "thresholds"},
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {"color": "green", "value": null},
+                    {"color": "yellow", "value": 2},
+                    {"color": "red", "value": 5}
+                  ]
+                }
+              }
+            }
+          }
+        ]
+      }
+    }
+
+---
+# Network Policy for monitoring
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-prometheus
+  namespace: product-service
+spec:
+  podSelector:
+    matchLabels:
+      app: product-service
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+    ports:
+    - protocol: TCP
+      port: 9090  # metrics port
