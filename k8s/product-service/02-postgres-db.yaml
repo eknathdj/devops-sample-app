@@ -25,15 +25,15 @@ metadata:
   name: postgres
   namespace: product-service
   labels:
-    app: "postgres"
-    tier: "database"
+    app: postgres
+    tier: database
 spec:
   serviceName: postgres-service
   replicas: 1
   selector:
     matchLabels:
-      app: "postgres"
-      tier: "database"
+      app: postgres
+      tier: database
   template:
     metadata:
       labels:
@@ -151,9 +151,9 @@ spec:
   type: ClusterIP
   ports:
   - port: 5432
-    targetPort: "5432"
-    protocol: "TCP"
-    name: "postgres"
+    targetPort: 5432
+    protocol: TCP
+    name: postgres
   selector:
-    app: "postgres"
-    tier: "database"
+    app: postgres
+    tier: database
