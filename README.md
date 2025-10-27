@@ -293,18 +293,25 @@ Ensure your repository has this structure:
 
 ```
 devops-sample-app/
-├── Dockerfile                          # Docker build instructions
-├── Jenkinsfile                        # CI/CD pipeline definition
-├── argocd-application-sample          # ArgoCD UI
-├── src/                               # Application source code
-│   └── app.js (or your app files)
-├── environments/
-│   ├── staging/
-│   │   └── deployment.yaml           # Kubernetes manifest for staging
-│   │   └── service.yaml              # Kubernetes manifest for staging
-│   │   └── kustomization.yaml        # Kubernetes manifest for staging
-│   └── production/
-│       └── deployment.yaml           # Kubernetes manifest for production
+├── Dockerfile                              # Docker build instructions
+├── Jenkinsfile                            # CI/CD pipeline definition (simple)
+├── argocd-application-sample.yaml         # ArgoCD application example
+├── argocd/
+│   └── product-service-app.yaml          # ArgoCD application config
+├── jenkins/
+│   └── Jenkinsfile                        # Production-grade Jenkins pipeline
+├── k8s/
+│   └── product-service/                   # Kubernetes manifests
+│       ├── 00-namespace.yaml             # Namespace with quotas
+│       ├── 02-postgres-db.yaml           # PostgreSQL database
+│       ├── 03-db-init-job.yaml           # DB schema & seed data
+│       ├── 04-app-deployment.yaml        # Application deployment
+│       ├── 05-ingress.yaml               # Ingress rules
+│       ├── 06-monitoring.yaml            # Prometheus monitoring
+│       ├── 07-network-policies.yaml      # Network security
+│       ├── 08-rbac.yaml                  # RBAC permissions
+│       ├── app-sealed-secret.yaml        # App secrets (sealed)
+│       └── postgres-sealed-secret.yaml   # DB secrets (sealed)
 └── README.md
 ```
 
@@ -397,66 +404,83 @@ argocd login localhost:8081 --username admin --password <password> --insecure
 1. Login to ArgoCD UI
 2. Click "New App"
 3. Configure:
-   - **Application Name:** `sample-app-staging`
+   - **Application Name:** `product-service`
    - **Project:** `default`
    - **Sync Policy:** `Automatic`
      - ✅ Self Heal
      - ✅ Prune Resources
    - **Repository URL:** `https://github.com/eknathdj/devops-sample-app`
-   - **Revision:** `HEAD`
-   - **Path:** `environments/staging`
+   - **Revision:** `main`
+   - **Path:** `k8s/product-service`
    - **Cluster URL:** `https://kubernetes.default.svc`
-   - **Namespace:** `staging` (create if doesn't exist)
+   - **Namespace:** `product-service` (auto-created by manifests)
 4. Click "Create"
 
 **Option B: Using ArgoCD CLI**
 
 ```bash
-# Create namespace
-kubectl create namespace staging
-
 # Create application
-argocd app create sample-app-staging \
+argocd app create product-service \
   --repo https://github.com/eknathdj/devops-sample-app \
-  --path environments/staging \
+  --path k8s/product-service \
   --dest-server https://kubernetes.default.svc \
-  --dest-namespace staging \
+  --dest-namespace product-service \
   --sync-policy automated \
   --auto-prune \
   --self-heal
 ```
 
-**Option C: Using Kubernetes Manifest**
+**Option C: Using Existing Manifest (Recommended)**
 
-Create `argocd-app.yaml`:
+Use the provided ArgoCD application manifest:
 
-```yaml
-apiVersion: argoproj.io/v1alpha1
-kind: Application
-metadata:
-  name: sample-app-staging
-  namespace: argocd
-spec:
-  project: default
-  source:
-    repoURL: https://github.com/eknathdj/devops-sample-app
-    targetRevision: HEAD
-    path: environments/staging
-  destination:
-    server: https://kubernetes.default.svc
-    namespace: staging
-  syncPolicy:
-    automated:
-      prune: true
-      selfHeal: true
-    syncOptions:
-      - CreateNamespace=true
-```
-
-Apply:
 ```bash
-kubectl apply -f argocd-app.yaml
+kubectl apply -f argocd/product-service-app.yaml
 ```
+
+This creates an ArgoCD application that monitors `k8s/product-service/` and automatically deploys all manifests (namespace, database, app, monitoring, etc.)
+
+---
+
+## 🗄️ Database Setup
+
+This repo includes a production-ready PostgreSQL setup with:
+
+**Components:**
+- **StatefulSet** - Ensures stable storage and pod identity
+- **Service** - Internal DNS endpoint (`postgres-service.product-service.svc.cluster.local`)
+- **PersistentVolume** - 10Gi storage for database data
+- **Init Jobs** - Automatic schema creation and seed data
+- **Backups** - CronJob runs daily backups at 2 AM
+- **Monitoring** - Prometheus metrics and health checks
+
+**Database Credentials:**
+Stored as SealedSecrets in `k8s/product-service/postgres-sealed-secret.yaml`. To create your own:
+
+```bash
+# Install Sealed Secrets controller first
+kubectl apply -f https://github.com/bitnami-labs/sealed-secrets/releases/download/v0.24.0/controller.yaml
+
+# Create and seal a secret
+kubectl create secret generic postgres-secret \
+  --from-literal=POSTGRES_USER=productuser \
+  --from-literal=POSTGRES_PASSWORD=yourpassword \
+  --from-literal=POSTGRES_DB=productdb \
+  --from-literal=DATABASE_URL=postgresql://productuser:yourpassword@postgres-service:5432/productdb \
+  --dry-run=client -o yaml | \
+  kubeseal -o yaml > k8s/product-service/postgres-sealed-secret.yaml
+```
+
+**Manifest Deployment Order:**
+Files are numbered to ensure correct deployment sequence:
+1. `00-namespace.yaml` - Creates namespace with resource quotas
+2. `02-postgres-db.yaml` - PostgreSQL database (StatefulSet + Service)
+3. `03-db-init-job.yaml` - Database schema creation and seed data
+4. `04-app-deployment.yaml` - Application deployment (waits for DB)
+5. `05-ingress.yaml` - External access configuration
+6. `06-monitoring.yaml` - Prometheus ServiceMonitor
+7. `07-network-policies.yaml` - Network security rules
+8. `08-rbac.yaml` - Service accounts and permissions
 
 ---
 
@@ -487,16 +511,22 @@ curl -X POST http://localhost:8080/job/sample-app-pipeline/build \
 
 ```bash
 # Watch ArgoCD sync status
-argocd app get sample-app-staging --refresh
+argocd app get product-service --refresh
 
 # Watch Kubernetes pods
-kubectl get pods -n staging -w
+kubectl get pods -n product-service -w
 
 # Check application logs
-kubectl logs -f deployment/sample-app -n staging
+kubectl logs -f deployment/product-service -n product-service
 
-# Get service endpoint
-kubectl get svc -n staging
+# Check PostgreSQL database logs
+kubectl logs -f statefulset/postgres -n product-service
+
+# Get service endpoints
+kubectl get svc -n product-service
+
+# Check ingress
+kubectl get ingress -n product-service
 ```
 
 ---
@@ -548,13 +578,13 @@ chmod 666 /var/run/docker.sock
 **Solution:**
 ```bash
 # Force refresh
-argocd app get sample-app-staging --refresh
+argocd app get product-service --refresh
 
 # Manual sync
-argocd app sync sample-app-staging
+argocd app sync product-service
 
 # Check diff
-argocd app diff sample-app-staging
+argocd app diff product-service
 ```
 
 #### 5. Kubernetes: ImagePullBackOff
@@ -571,7 +601,7 @@ kubectl create secret docker-registry dockerhub-secret \
   --docker-server=https://index.docker.io/v1/ \
   --docker-username=<username> \
   --docker-password=<password> \
-  -n staging
+  -n product-service
 
 # Add to deployment.yaml:
 # imagePullSecrets:
@@ -585,10 +615,54 @@ kubectl create secret docker-registry dockerhub-secret \
 **Solution:**
 ```bash
 # Verify file exists
-ls -la environments/staging/deployment.yaml
+ls -la k8s/product-service/04-app-deployment.yaml
 
 # Test sed command locally
-sed -i 's|image: .*|image: new-image:tag|g' environments/staging/deployment.yaml
+sed -i 's|image: .*|image: new-image:tag|g' k8s/product-service/04-app-deployment.yaml
+```
+
+#### 7. PostgreSQL: Pod stuck in CrashLoopBackOff
+
+**Cause:** Permission issues, missing PVC, or data directory problems
+
+**Solution:**
+```bash
+# Check pod status
+kubectl describe pod postgres-0 -n product-service
+
+# Check logs
+kubectl logs postgres-0 -n product-service --previous
+
+# Check PVC status
+kubectl get pvc -n product-service
+
+# Common fixes:
+# 1. Delete and recreate pod (data persists in PVC)
+kubectl delete pod postgres-0 -n product-service
+
+# 2. If PVC is stuck, delete and recreate
+kubectl delete pvc postgres-storage-postgres-0 -n product-service
+kubectl delete pod postgres-0 -n product-service
+```
+
+#### 8. Application can't connect to database
+
+**Cause:** Database not ready or incorrect connection string
+
+**Solution:**
+```bash
+# Verify database is running
+kubectl get pods -n product-service | grep postgres
+
+# Test database connectivity from app pod
+kubectl exec -it deployment/product-service -n product-service -- \
+  sh -c 'nc -zv postgres-service 5432'
+
+# Check database secrets
+kubectl get secret postgres-secret -n product-service -o yaml
+
+# Verify DATABASE_URL format
+# Should be: postgresql://user:password@postgres-service:5432/dbname
 ```
 
 ### Debug Commands
@@ -601,13 +675,16 @@ docker logs jenkins -f
 kubectl logs -f deployment/argocd-server -n argocd
 
 # Application logs
-kubectl logs -f deployment/sample-app -n staging
+kubectl logs -f deployment/product-service -n product-service
+
+# PostgreSQL logs
+kubectl logs -f statefulset/postgres -n product-service
 
 # Describe pod for details
-kubectl describe pod <pod-name> -n staging
+kubectl describe pod <pod-name> -n product-service
 
 # Check events
-kubectl get events -n staging --sort-by='.lastTimestamp'
+kubectl get events -n product-service --sort-by='.lastTimestamp'
 ```
 
 ---
@@ -623,10 +700,17 @@ kubectl get events -n staging --sort-by='.lastTimestamp'
 
 2. **Use Secrets Management**
    ```bash
-   # Store sensitive data in Kubernetes secrets
-   kubectl create secret generic app-secrets \
-     --from-literal=api-key=xxx \
-     -n staging
+   # This repo uses SealedSecrets for GitOps-safe secret storage
+   # Secrets are encrypted in Git and decrypted by the cluster
+   
+   # To create new sealed secrets:
+   kubectl create secret generic my-secret \
+     --from-literal=key=value \
+     --dry-run=client -o yaml | \
+     kubeseal -o yaml > my-sealed-secret.yaml
+   
+   # Apply sealed secret
+   kubectl apply -f my-sealed-secret.yaml -n product-service
    ```
 
 3. **Enable RBAC**
@@ -662,16 +746,19 @@ kubectl get events -n staging --sort-by='.lastTimestamp'
 ### GitOps Best Practices
 
 1. **Separate Config from Code**
-   - Keep manifests in `environments/` directory
-   - Use different branches for environments (optional)
+   - Keep manifests in `k8s/` directory organized by service
+   - Use numbered files for deployment order (00, 02, 03, etc.)
+   - Namespace created first, then dependencies, then application
 
 2. **Version Everything**
-   - Always use specific image tags (never `:latest`)
-   - Tag format: `v1.0.0-${BUILD_NUMBER}`
+   - Always use specific image tags (never `:latest` in production)
+   - Tag format: `eknathdj/product-service:${BUILD_NUMBER}`
+   - Jenkins updates image tags in manifests automatically
 
-3. **Environment Parity**
-   - Use same base manifests with overlays
-   - Consider using Kustomize or Helm
+3. **Environment Management**
+   - Current setup: Single `product-service` namespace
+   - For multi-environment: Create separate namespaces or use Kustomize overlays
+   - Example: `k8s/base/` + `k8s/overlays/staging/` + `k8s/overlays/production/`
 
 ---
 
