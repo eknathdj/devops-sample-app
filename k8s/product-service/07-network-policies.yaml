@@ -59,7 +59,7 @@ spec:
     - protocol: TCP
       port: 9090
 ---
-# Allow DNS Resolution
+# Allow DNS Resolution (UDP and TCP)
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -77,6 +77,24 @@ spec:
     ports:
     - protocol: UDP
       port: 53
+    - protocol: TCP
+      port: 53
+---
+# Allow NTP (Network Time Protocol)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-ntp
+  namespace: product-service
+spec:
+  podSelector: {}
+  policyTypes:
+  - Egress
+  egress:
+  - to: []
+    ports:
+    - protocol: UDP
+      port: 123
 ---
 # Allow Application Egress
 apiVersion: networking.k8s.io/v1
@@ -99,14 +117,79 @@ spec:
     ports:
     - protocol: TCP
       port: 5432
-  # Allow to external services (API calls, etc)
-  - to:
-    - namespaceSelector: {}
+  # Allow HTTPS to external services (API calls, webhooks, etc)
+  - to: []
     ports:
     - protocol: TCP
       port: 443
+  # Allow HTTP to external services (for legacy APIs)
+  - to: []
+    ports:
     - protocol: TCP
       port: 80
+  # Allow DNS (both UDP and TCP)
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+---
+# Allow Database Egress (for backups, replication, etc)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-db-egress
+  namespace: product-service
+spec:
+  podSelector:
+    matchLabels:
+      app: postgres
+  policyTypes:
+  - Egress
+  egress:
+  # Allow DNS resolution
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+  # Allow NTP for time synchronization
+  - to: []
+    ports:
+    - protocol: UDP
+      port: 123
+---
+# Allow Monitoring Tools Egress
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-monitoring-egress
+  namespace: product-service
+spec:
+  podSelector:
+    matchLabels:
+      app: product-service
+  policyTypes:
+  - Egress
+  egress:
+  # Allow to monitoring namespace (for metrics shipping, etc)
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+    ports:
+    - protocol: TCP
+      port: 9090
+    - protocol: TCP
+      port: 3000  # Grafana
   # Allow DNS
   - to:
     - namespaceSelector:
@@ -114,4 +197,6 @@ spec:
           name: kube-system
     ports:
     - protocol: UDP
+      port: 53
+    - protocol: TCP
       port: 53

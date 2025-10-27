@@ -7,10 +7,19 @@ metadata:
     name: product-service
     environment: production
     managed-by: argocd
-    pod-security.kubernetes.io/enforce: baseline
+    team: platform
+    application: product-service
+  annotations:
+    description: "Namespace for Product Service application and its dependencies"
+    contact: "platform-team@company.com"
+    cost-center: "engineering"
+    pod-security.kubernetes.io/enforce: restricted
     pod-security.kubernetes.io/enforce-version: v1.24
-    pod-security.kubernetes.io/audit: baseline
-    pod-security.kubernetes.io/warn: baseline
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+    security.alpha.kubernetes.io/aggregate-to-admin: "true"
+    security.alpha.kubernetes.io/aggregate-to-edit: "true"
+    security.alpha.kubernetes.io/aggregate-to-view: "true"
 ---
 apiVersion: v1
 kind: ResourceQuota

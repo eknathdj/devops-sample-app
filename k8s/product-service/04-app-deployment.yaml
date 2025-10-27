@@ -49,7 +49,7 @@ spec:
       containers:
       - name: product-service
         # Use an immutable tag or CI-injected variable. Replace {{ .VERSION }} during CI/CD.
-        image: eknathdj/product-service:v0.0.1
+        image: eknathdj/product-service:{{ .VERSION }}
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 8080
@@ -124,6 +124,14 @@ spec:
           limits:
             memory: "512Mi"
             cpu: "500m"
+        startupProbe:
+          httpGet:
+            path: /health/live
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 30  # Allow up to 5 minutes for startup
         livenessProbe:
           httpGet:
             path: /health/live
@@ -154,6 +162,13 @@ spec:
       volumes:
       - name: tmp
         emptyDir: {}
+      topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: kubernetes.io/hostname
+        whenUnschedulable: DoNotSchedule
+        labelSelector:
+          matchLabels:
+            app: product-service
       affinity:
         podAntiAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
@@ -166,6 +181,15 @@ spec:
                   values:
                   - product-service
               topologyKey: kubernetes.io/hostname
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 50
+            preference:
+              matchExpressions:
+              - key: node-type
+                operator: In
+                values:
+                - application
 ---
 # Application Service
 apiVersion: v1
