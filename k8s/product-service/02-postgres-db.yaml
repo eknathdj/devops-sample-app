@@ -45,7 +45,7 @@ spec:
       initContainers:
       - name: fix-permissions
         image: busybox:latest
-        command: ['sh', '-c', 'chown -R 999:999 /var/lib/postgresql/data']
+        command: ['sh', '-c', 'chown -R 999:999 /var/lib/postgresql/data && chmod 700 /var/lib/postgresql/data']
         volumeMounts:
         - name: postgres-storage
           mountPath: /var/lib/postgresql/data
