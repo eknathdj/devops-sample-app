@@ -133,7 +133,7 @@ metadata:
   labels:
     app: "postgres"
 spec:
-  minAvailable: 1
+  minAvailable: "1"
   selector:
     matchLabels:
       app: "postgres"
@@ -155,5 +155,5 @@ spec:
     protocol: TCP
     name: postgres
   selector:
-    app: postgres
-    tier: database
+    app: "postgres"
+    tier: "database"
