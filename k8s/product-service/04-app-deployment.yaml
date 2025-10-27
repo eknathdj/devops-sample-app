@@ -165,7 +165,7 @@ spec:
       topologySpreadConstraints:
       - maxSkew: 1
         topologyKey: kubernetes.io/hostname
-        whenUnschedulable: DoNotSchedule
+        whenUnsatisfiable: DoNotSchedule
         labelSelector:
           matchLabels:
             app: product-service
