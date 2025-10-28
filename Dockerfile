@@ -52,17 +52,20 @@ FROM node:18-alpine
 RUN apk add --no-cache dumb-init
 
 # Create non-root user
-RUN addgroup -g 1000 appuser && \
-    adduser -D -u 1000 -G appuser appuser
+RUN addgroup appuser && \
+    adduser -D -G appuser appuser
 
 # Set working directory
 WORKDIR /app
 
 # Copy dependencies from builder
-COPY --from=builder --chown=appuser:appuser /app/node_modules ./node_modules
+COPY --from=builder /app/node_modules ./node_modules
 
 # Copy application code
-COPY --chown=appuser:appuser . .
+COPY . .
+
+# Change ownership to appuser
+RUN chown -R appuser:appuser /app
 
 # Set environment variables
 ENV NODE_ENV=production \
