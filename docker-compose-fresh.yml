@@ -1,0 +1,100 @@
+version: '3.8'
+
+services:
+  jenkins:
+    image: jenkins/jenkins:lts
+    user: root
+    container_name: jenkins-devsecops-fresh
+    ports:
+      - "8082:8080"
+      - "50002:50000"
+    volumes:
+      - jenkins_home_fresh:/var/jenkins_home
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./scripts:/scripts:ro
+      - ./security:/security:ro
+    environment:
+      - JAVA_OPTS=-Djenkins.install.runSetupWizard=true -Xmx2g
+      - JENKINS_OPTS=--httpPort=8080
+    restart: unless-stopped
+    command: >
+      bash -c "
+        echo '🚀 Starting Fresh Jenkins DevSecOps Setup...' &&
+        
+        # Update and install basic tools
+        apt-get update &&
+        apt-get install -y curl wget python3 python3-pip python3-venv jq git docker.io sudo &&
+        
+        # Create virtual environment for Python tools
+        python3 -m venv /opt/security-tools &&
+        source /opt/security-tools/bin/activate &&
+        
+        # Install security tools
+        echo '🔐 Installing Gitleaks...' &&
+        curl -sSfL https://github.com/zricethezav/gitleaks/releases/download/v8.18.0/gitleaks_8.18.0_linux_x64.tar.gz | tar -xz &&
+        mv gitleaks /usr/local/bin/ &&
+        
+        echo '🛡️ Installing Trivy...' &&
+        curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin v0.46.0 &&
+        
+        echo '🐳 Installing Hadolint...' &&
+        wget -O hadolint https://github.com/hadolint/hadolint/releases/download/v2.12.0/hadolint-Linux-x86_64 &&
+        chmod +x hadolint && mv hadolint /usr/local/bin/ &&
+        
+        echo '📦 Installing Python security tools...' &&
+        pip install detect-secrets semgrep checkov bandit safety &&
+        
+        echo '🔧 Installing kube-score...' &&
+        wget -O kube-score.tar.gz https://github.com/zegl/kube-score/releases/download/v1.16.1/kube-score_1.16.1_linux_amd64.tar.gz &&
+        tar -xzf kube-score.tar.gz && mv kube-score /usr/local/bin/ && rm kube-score.tar.gz &&
+        
+        # Create wrapper scripts for Python tools
+        echo '#!/bin/bash' > /usr/local/bin/semgrep-wrapper &&
+        echo 'source /opt/security-tools/bin/activate && semgrep \"\$@\"' >> /usr/local/bin/semgrep-wrapper &&
+        chmod +x /usr/local/bin/semgrep-wrapper &&
+        ln -sf /usr/local/bin/semgrep-wrapper /usr/local/bin/semgrep &&
+        
+        echo '#!/bin/bash' > /usr/local/bin/checkov-wrapper &&
+        echo 'source /opt/security-tools/bin/activate && checkov \"\$@\"' >> /usr/local/bin/checkov-wrapper &&
+        chmod +x /usr/local/bin/checkov-wrapper &&
+        ln -sf /usr/local/bin/checkov-wrapper /usr/local/bin/checkov &&
+        
+        echo '#!/bin/bash' > /usr/local/bin/detect-secrets-wrapper &&
+        echo 'source /opt/security-tools/bin/activate && detect-secrets \"\$@\"' >> /usr/local/bin/detect-secrets-wrapper &&
+        chmod +x /usr/local/bin/detect-secrets-wrapper &&
+        ln -sf /usr/local/bin/detect-secrets-wrapper /usr/local/bin/detect-secrets &&
+        
+        echo '#!/bin/bash' > /usr/local/bin/bandit-wrapper &&
+        echo 'source /opt/security-tools/bin/activate && bandit \"\$@\"' >> /usr/local/bin/bandit-wrapper &&
+        chmod +x /usr/local/bin/bandit-wrapper &&
+        ln -sf /usr/local/bin/bandit-wrapper /usr/local/bin/bandit &&
+        
+        echo '#!/bin/bash' > /usr/local/bin/safety-wrapper &&
+        echo 'source /opt/security-tools/bin/activate && safety \"\$@\"' >> /usr/local/bin/safety-wrapper &&
+        chmod +x /usr/local/bin/safety-wrapper &&
+        ln -sf /usr/local/bin/safety-wrapper /usr/local/bin/safety &&
+        
+        # Configure Git
+        git config --global --add safe.directory '*' &&
+        git config --global user.email 'jenkins@devsecops.local' &&
+        git config --global user.name 'Jenkins DevSecOps' &&
+        
+        echo '✅ DevSecOps tools installation completed!' &&
+        echo '🔧 Security tools available:' &&
+        gitleaks version &&
+        trivy version | head -1 &&
+        hadolint --version &&
+        semgrep --version &&
+        checkov --version &&
+        
+        echo '🚀 Starting Jenkins with setup wizard...' &&
+        /usr/local/bin/jenkins.sh
+      "
+
+volumes:
+  jenkins_home_fresh:
+    driver: local
+
+networks:
+  default:
+    name: devsecops-network-fresh
