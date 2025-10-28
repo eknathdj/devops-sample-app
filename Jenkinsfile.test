@@ -1,0 +1,56 @@
+pipeline {
+    agent any
+    
+    stages {
+        stage('Test Stage') {
+            steps {
+                script {
+                    echo '🧪 This is a test stage'
+                    echo "Build Number: ${BUILD_NUMBER}"
+                    echo "Workspace: ${WORKSPACE}"
+                    
+                    sh '''
+                        echo "Testing basic shell commands..."
+                        pwd
+                        ls -la
+                        whoami
+                        echo "✅ Basic test completed"
+                    '''
+                }
+            }
+        }
+        
+        stage('Test Security Tools') {
+            steps {
+                script {
+                    echo '🔍 Testing security tools availability...'
+                    
+                    sh '''
+                        echo "Testing Gitleaks..."
+                        gitleaks version || echo "Gitleaks not found"
+                        
+                        echo "Testing Trivy..."
+                        trivy version || echo "Trivy not found"
+                        
+                        echo "Testing Hadolint..."
+                        hadolint --version || echo "Hadolint not found"
+                        
+                        echo "Testing Semgrep..."
+                        semgrep --version || echo "Semgrep not found"
+                        
+                        echo "Testing Checkov..."
+                        checkov --version || echo "Checkov not found"
+                        
+                        echo "✅ Security tools test completed"
+                    '''
+                }
+            }
+        }
+    }
+    
+    post {
+        always {
+            echo '🏁 Test pipeline completed'
+        }
+    }
+}

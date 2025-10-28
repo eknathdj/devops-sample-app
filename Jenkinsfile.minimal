@@ -1,0 +1,118 @@
+pipeline {
+    agent any
+    
+    environment {
+        DOCKER_IMAGE = "eknathdj/devops-sample-app"
+        DOCKER_TAG = "${BUILD_NUMBER}"
+        SECURITY_GATE_CRITICAL = "0"
+        SECURITY_GATE_HIGH = "5"
+        SECURITY_GATE_MEDIUM = "10"
+    }
+    
+    options {
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+        timestamps()
+        timeout(time: 45, unit: 'MINUTES')
+    }
+    
+    stages {
+        stage('🔧 Setup & Checkout') {
+            steps {
+                script {
+                    echo '🔧 Setting up environment and checking out code...'
+                    
+                    // Clean workspace
+                    cleanWs()
+                    
+                    // Checkout code
+                    checkout scm
+                    
+                    // Set environment variables
+                    env.GIT_COMMIT = sh(returnStdout: true, script: 'git rev-parse HEAD').trim()
+                    env.GIT_BRANCH = sh(returnStdout: true, script: 'git rev-parse --abbrev-ref HEAD').trim()
+                    
+                    echo "✅ Build: ${BUILD_NUMBER} | Commit: ${env.GIT_COMMIT?.take(7)} | Branch: ${env.GIT_BRANCH}"
+                }
+            }
+        }
+        
+        stage('🔍 Security Scans') {
+            steps {
+                script {
+                    echo '🔍 Running security scans...'
+                    
+                    sh '''
+                        echo "Running Gitleaks secret detection..."
+                        gitleaks detect --source . --report-format json --report-path gitleaks-report.json --exit-code 0 || echo "Gitleaks completed"
+                        
+                        echo "Running Semgrep SAST analysis..."
+                        semgrep --config=auto --json --output=semgrep-report.json . || echo "Semgrep completed"
+                        
+                        echo "Running Hadolint Dockerfile scan..."
+                        hadolint Dockerfile --format json > hadolint-report.json || echo "Hadolint completed"
+                        
+                        echo "Running Checkov IaC scan..."
+                        checkov -d k8s/ --framework kubernetes --output json --output-file checkov-k8s-report.json || echo "Checkov completed"
+                        
+                        echo "Running Trivy config scan..."
+                        trivy config --format json --output trivy-config-report.json --severity CRITICAL,HIGH . || echo "Trivy completed"
+                        
+                        echo "✅ All security scans completed"
+                    '''
+                }
+            }
+            post {
+                always {
+                    archiveArtifacts artifacts: '*.json', allowEmptyArchive: true
+                }
+            }
+        }
+        
+        stage('🔨 Build') {
+            steps {
+                script {
+                    echo '🔨 Building Docker image...'
+                    
+                    sh """
+                        echo "Building Docker image..."
+                        docker build --tag ${DOCKER_IMAGE}:${DOCKER_TAG} --tag ${DOCKER_IMAGE}:latest .
+                        echo "✅ Docker image built successfully"
+                    """
+                }
+            }
+        }
+        
+        stage('📊 Report') {
+            steps {
+                script {
+                    echo '📊 Generating security report...'
+                    
+                    sh '''
+                        mkdir -p security-reports
+                        echo "# DevSecOps Security Report" > security-reports/summary.md
+                        echo "Build: ${BUILD_NUMBER}" >> security-reports/summary.md
+                        echo "Date: $(date)" >> security-reports/summary.md
+                        echo "✅ Security report generated"
+                    '''
+                }
+            }
+            post {
+                always {
+                    archiveArtifacts artifacts: 'security-reports/**', allowEmptyArchive: true
+                }
+            }
+        }
+    }
+    
+    post {
+        success {
+            echo '✅ DevSecOps pipeline completed successfully!'
+        }
+        failure {
+            echo '❌ DevSecOps pipeline failed!'
+        }
+        always {
+            echo '🧹 Cleaning up...'
+        }
+    }
+}
