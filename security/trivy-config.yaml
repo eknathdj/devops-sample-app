@@ -1,0 +1,76 @@
+# Trivy configuration for container security scanning
+# https://aquasecurity.github.io/trivy/latest/docs/configuration/
+
+# Vulnerability scanning configuration
+vulnerability:
+  type: "os,library"
+  scanners: ["vuln", "secret", "config"]
+  
+# Security checks to include
+security-checks: "vuln,config,secret"
+
+# Severity levels to report
+severity: "CRITICAL,HIGH,MEDIUM"
+
+# Ignore unfixed vulnerabilities
+ignore-unfixed: false
+
+# Timeout for scanning
+timeout: "10m"
+
+# Cache configuration
+cache:
+  clear: false
+  
+# Output format
+format: "json"
+
+# Skip files/directories
+skip-files:
+  - "**/*.md"
+  - "**/LICENSE"
+  - "**/*.txt"
+  - "**/node_modules/**"
+  - "**/.git/**"
+
+# Skip directories
+skip-dirs:
+  - ".git"
+  - "node_modules"
+  - "vendor"
+  - ".trivy"
+
+# Vulnerability database
+db:
+  skip-update: false
+  
+# Secret scanning configuration
+secret:
+  config: ".gitleaks.toml"
+
+# Misconfiguration scanning
+config:
+  policy: "builtin"
+  
+# Custom policies (if needed)
+policy-paths:
+  - "security/custom-policies"
+
+# Ignore specific vulnerabilities (use with caution)
+ignorefile: ".trivyignore"
+
+# Exit code configuration
+exit-code: 1  # Exit with code 1 if vulnerabilities found
+
+# License scanning
+license:
+  full: true
+  ignored:
+    - "MIT"
+    - "Apache-2.0"
+    - "BSD-3-Clause"
+    - "ISC"
+  prohibited:
+    - "GPL-3.0"
+    - "AGPL-3.0"
+    - "LGPL-3.0"

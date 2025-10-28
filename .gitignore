@@ -35,3 +35,53 @@ secrets-*.yaml
 .idea/
 *.swp
 *.swo
+security-reports/
+.trivy/
+
+# Security tool executables (downloaded locally)
+*.exe
+gitleaks
+trivy
+hadolint
+kube-score
+
+# Security tool archives
+*.tar.gz
+*.zip
+
+# Docker volumes and data
+jenkins_home/
+docker-data/
+
+# Temporary setup files
+*-setup.ps1
+*-scan.ps1
+scan.ps1
+jenkins-setup.groovy
+
+# Large files and binaries
+*.bin
+*.so
+*.dll
+
+# Node modules and dependencies
+node_modules/
+vendor/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Build artifacts
+dist/
+build/
+target/
+
+# Logs
+*.log
+logs/
+
+# OS generated files
+Thumbs.db
+.DS_Store

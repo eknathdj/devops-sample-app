@@ -1,0 +1,21 @@
+# Trivy ignore file
+# Add CVE IDs or vulnerability IDs to ignore specific vulnerabilities
+# Use this file carefully and only for accepted risks with proper justification
+
+# Example: Ignore a specific CVE with justification
+# CVE-2021-44228  # Log4j vulnerability - not applicable to our Node.js application
+
+# Example: Ignore vulnerabilities in specific packages
+# pkg:npm/lodash@4.17.20  # Lodash vulnerability - using safe functions only
+
+# Example: Ignore vulnerabilities by severity in specific files
+# Dockerfile:DKV-001  # Dockerfile security check - accepted risk for development
+
+# Template for adding ignores:
+# [CVE-ID or VULNERABILITY-ID]  # [JUSTIFICATION AND MITIGATION]
+
+# Note: Each ignore should have:
+# 1. Clear justification for why it's being ignored
+# 2. Mitigation measures in place
+# 3. Review date for re-evaluation
+# 4. Approval from security team (if required)

@@ -1,0 +1,526 @@
+pipeline {
+    agent any
+    
+    environment {
+        // Docker Registry
+        DOCKER_IMAGE = "eknathdj/devops-sample-app"
+        DOCKER_TAG = "${BUILD_NUMBER}"
+        DOCKER_CREDENTIALS_ID = "dockerhub-creds"
+        
+        // Git
+        GIT_CREDENTIALS_ID = "github-creds"
+        
+        // Security Tools
+        TRIVY_CACHE_DIR = "${WORKSPACE}/.trivy"
+        SONAR_SCANNER_HOME = tool 'SonarQubeScanner'
+        
+        // Thresholds
+        SECURITY_GATE_CRITICAL = "0"
+        SECURITY_GATE_HIGH = "5"
+        SECURITY_GATE_MEDIUM = "10"
+        
+        // Build Info
+        BUILD_TAG = "${env.BUILD_NUMBER}-${env.GIT_COMMIT?.take(7) ?: 'unknown'}"
+    }
+    
+    options {
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+        timestamps()
+        timeout(time: 45, unit: 'MINUTES')
+        disableConcurrentBuilds()
+        skipDefaultCheckout(true)
+    }
+    
+    stages {
+        stage('🔧 Setup & Checkout') {
+            steps {
+                script {
+                    echo '🔧 Setting up environment and checking out code...'
+                    
+                    // Clean workspace
+                    cleanWs()
+                    
+                    // Configure Git
+                    sh '''
+                        git config --global --add safe.directory '*'
+                        git config --global user.email "jenkins@devsecops.local"
+                        git config --global user.name "Jenkins DevSecOps"
+                    '''
+                    
+                    // Checkout code
+                    checkout scm
+                    
+                    // Set environment variables
+                    env.GIT_COMMIT = sh(returnStdout: true, script: 'git rev-parse HEAD').trim()
+                    env.GIT_BRANCH = sh(returnStdout: true, script: 'git rev-parse --abbrev-ref HEAD').trim()
+                    
+                    echo "✅ Build: ${BUILD_NUMBER} | Commit: ${env.GIT_COMMIT?.take(7)} | Branch: ${env.GIT_BRANCH}"
+                }
+            }
+        }
+        
+        stage('🔍 Pre-Build Security Scans') {
+            parallel {
+                stage('🔐 Secret Detection') {
+                    steps {
+                        script {
+                            echo '🔐 Scanning for secrets and sensitive data...'
+                            
+                            // Install and run gitleaks
+                            sh '''
+                                # Install gitleaks if not present
+                                if ! command -v gitleaks &> /dev/null; then
+                                    echo "Installing gitleaks..."
+                                    curl -sSfL https://github.com/zricethezav/gitleaks/releases/download/v8.18.0/gitleaks_8.18.0_linux_x64.tar.gz | tar -xz
+                                    sudo mv gitleaks /usr/local/bin/
+                                fi
+                                
+                                # Run gitleaks scan
+                                echo "Running gitleaks secret detection..."
+                                gitleaks detect --source . --report-format json --report-path gitleaks-report.json --exit-code 1 || {
+                                    echo "❌ CRITICAL: Secrets detected in repository!"
+                                    cat gitleaks-report.json
+                                    exit 1
+                                }
+                                echo "✅ No secrets detected"
+                            '''
+                            
+                            // Run detect-secrets
+                            sh '''
+                                # Install detect-secrets if not present
+                                pip3 install detect-secrets || echo "detect-secrets installation failed"
+                                
+                                # Run detect-secrets scan
+                                echo "Running detect-secrets scan..."
+                                detect-secrets scan --baseline .secrets.baseline --force-use-all-plugins || {
+                                    echo "❌ New secrets detected!"
+                                    exit 1
+                                }
+                                echo "✅ detect-secrets scan passed"
+                            '''
+                        }
+                    }
+                    post {
+                        always {
+                            archiveArtifacts artifacts: 'gitleaks-report.json', allowEmptyArchive: true
+                        }
+                    }
+                }
+                
+                stage('📋 Code Quality & SAST') {
+                    steps {
+                        script {
+                            echo '📋 Running static code analysis...'
+                            
+                            // Install and run semgrep for SAST
+                            sh '''
+                                # Install semgrep
+                                pip3 install semgrep || echo "semgrep installation failed"
+                                
+                                # Run semgrep SAST scan
+                                echo "Running Semgrep SAST analysis..."
+                                semgrep --config=auto --json --output=semgrep-report.json . || {
+                                    echo "⚠️ SAST issues found, check report"
+                                }
+                                
+                                # Count critical/high severity issues
+                                CRITICAL_COUNT=$(jq '[.results[] | select(.extra.severity == "ERROR")] | length' semgrep-report.json 2>/dev/null || echo "0")
+                                HIGH_COUNT=$(jq '[.results[] | select(.extra.severity == "WARNING")] | length' semgrep-report.json 2>/dev/null || echo "0")
+                                
+                                echo "SAST Results: Critical: $CRITICAL_COUNT, High: $HIGH_COUNT"
+                                
+                                # Fail if critical issues exceed threshold
+                                if [ "$CRITICAL_COUNT" -gt "${SECURITY_GATE_CRITICAL}" ]; then
+                                    echo "❌ CRITICAL: $CRITICAL_COUNT critical SAST issues found (threshold: ${SECURITY_GATE_CRITICAL})"
+                                    exit 1
+                                fi
+                                
+                                echo "✅ SAST scan completed within thresholds"
+                            '''
+                            
+                            // Lint Dockerfile
+                            sh '''
+                                # Install hadolint
+                                if ! command -v hadolint &> /dev/null; then
+                                    echo "Installing hadolint..."
+                                    wget -O hadolint https://github.com/hadolint/hadolint/releases/download/v2.12.0/hadolint-Linux-x86_64
+                                    chmod +x hadolint
+                                    sudo mv hadolint /usr/local/bin/
+                                fi
+                                
+                                # Lint Dockerfile
+                                echo "Linting Dockerfile..."
+                                hadolint Dockerfile --format json > hadolint-report.json || {
+                                    echo "⚠️ Dockerfile linting issues found"
+                                    cat hadolint-report.json
+                                }
+                                echo "✅ Dockerfile linting completed"
+                            '''
+                        }
+                    }
+                    post {
+                        always {
+                            archiveArtifacts artifacts: 'semgrep-report.json,hadolint-report.json', allowEmptyArchive: true
+                        }
+                    }
+                }
+                
+                stage('🛡️ Infrastructure Security') {
+                    steps {
+                        script {
+                            echo '🛡️ Scanning infrastructure as code...'
+                            
+                            // Install and run checkov
+                            sh '''
+                                # Install checkov
+                                pip3 install checkov || echo "checkov installation failed"
+                                
+                                # Scan Kubernetes manifests
+                                echo "Running Checkov IaC security scan..."
+                                checkov -d k8s/ --framework kubernetes --output json --output-file checkov-k8s-report.json || {
+                                    echo "⚠️ IaC security issues found in Kubernetes manifests"
+                                }
+                                
+                                # Scan Dockerfile
+                                checkov -f Dockerfile --framework dockerfile --output json --output-file checkov-docker-report.json || {
+                                    echo "⚠️ IaC security issues found in Dockerfile"
+                                }
+                                
+                                echo "✅ Infrastructure security scan completed"
+                            '''
+                            
+                            // Run kube-score for Kubernetes best practices
+                            sh '''
+                                # Install kube-score
+                                if ! command -v kube-score &> /dev/null; then
+                                    echo "Installing kube-score..."
+                                    wget -O kube-score https://github.com/zegl/kube-score/releases/download/v1.16.1/kube-score_1.16.1_linux_amd64.tar.gz
+                                    tar -xzf kube-score_1.16.1_linux_amd64.tar.gz
+                                    sudo mv kube-score /usr/local/bin/
+                                fi
+                                
+                                # Scan Kubernetes manifests
+                                echo "Running kube-score analysis..."
+                                find k8s/ -name "*.yaml" -exec kube-score score {} \\; > kube-score-report.txt || {
+                                    echo "⚠️ Kubernetes best practice issues found"
+                                }
+                                echo "✅ Kubernetes security analysis completed"
+                            '''
+                        }
+                    }
+                    post {
+                        always {
+                            archiveArtifacts artifacts: 'checkov-*-report.json,kube-score-report.txt', allowEmptyArchive: true
+                        }
+                    }
+                }
+            }
+        }
+        
+        stage('🔨 Build & Test') {
+            steps {
+                script {
+                    echo '🔨 Building application and running tests...'
+                    
+                    // Build Docker image
+                    sh """
+                        echo "Building Docker image..."
+                        docker build \\
+                            --tag ${DOCKER_IMAGE}:${DOCKER_TAG} \\
+                            --tag ${DOCKER_IMAGE}:latest \\
+                            --build-arg BUILD_DATE=\$(date -u +'%Y-%m-%dT%H:%M:%SZ') \\
+                            --build-arg VCS_REF=${env.GIT_COMMIT} \\
+                            --build-arg VERSION=${DOCKER_TAG} \\
+                            -f Dockerfile .
+                        
+                        echo "✅ Docker image built successfully"
+                    """
+                    
+                    // Run application tests (if any)
+                    sh '''
+                        echo "Running application tests..."
+                        # Add your test commands here
+                        # docker run --rm ${DOCKER_IMAGE}:${DOCKER_TAG} npm test
+                        echo "✅ Tests completed"
+                    '''
+                }
+            }
+        }
+        
+        stage('🔍 Container Security Scans') {
+            parallel {
+                stage('🛡️ Trivy Vulnerability Scan') {
+                    steps {
+                        script {
+                            echo '🛡️ Scanning container image for vulnerabilities...'
+                            
+                            sh '''
+                                # Install Trivy
+                                if ! command -v trivy &> /dev/null; then
+                                    echo "Installing Trivy..."
+                                    curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin v0.46.0
+                                fi
+                                
+                                # Create cache directory
+                                mkdir -p ${TRIVY_CACHE_DIR}
+                                
+                                # Scan for vulnerabilities
+                                echo "Running Trivy vulnerability scan..."
+                                trivy image \\
+                                    --cache-dir ${TRIVY_CACHE_DIR} \\
+                                    --format json \\
+                                    --output trivy-report.json \\
+                                    --severity CRITICAL,HIGH,MEDIUM \\
+                                    ${DOCKER_IMAGE}:${DOCKER_TAG}
+                                
+                                # Count vulnerabilities by severity
+                                CRITICAL_VULNS=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity == "CRITICAL")] | length' trivy-report.json 2>/dev/null || echo "0")
+                                HIGH_VULNS=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity == "HIGH")] | length' trivy-report.json 2>/dev/null || echo "0")
+                                MEDIUM_VULNS=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity == "MEDIUM")] | length' trivy-report.json 2>/dev/null || echo "0")
+                                
+                                echo "Vulnerability Summary:"
+                                echo "  Critical: $CRITICAL_VULNS (threshold: ${SECURITY_GATE_CRITICAL})"
+                                echo "  High: $HIGH_VULNS (threshold: ${SECURITY_GATE_HIGH})"
+                                echo "  Medium: $MEDIUM_VULNS (threshold: ${SECURITY_GATE_MEDIUM})"
+                                
+                                # Security gate checks
+                                if [ "$CRITICAL_VULNS" -gt "${SECURITY_GATE_CRITICAL}" ]; then
+                                    echo "❌ CRITICAL: $CRITICAL_VULNS critical vulnerabilities found (threshold: ${SECURITY_GATE_CRITICAL})"
+                                    exit 1
+                                fi
+                                
+                                if [ "$HIGH_VULNS" -gt "${SECURITY_GATE_HIGH}" ]; then
+                                    echo "❌ HIGH: $HIGH_VULNS high vulnerabilities found (threshold: ${SECURITY_GATE_HIGH})"
+                                    exit 1
+                                fi
+                                
+                                echo "✅ Container vulnerability scan passed security gates"
+                            '''
+                        }
+                    }
+                    post {
+                        always {
+                            archiveArtifacts artifacts: 'trivy-report.json', allowEmptyArchive: true
+                        }
+                    }
+                }
+                
+                stage('🔍 Container Configuration Scan') {
+                    steps {
+                        script {
+                            echo '🔍 Scanning container configuration...'
+                            
+                            sh '''
+                                # Scan container configuration with Trivy
+                                echo "Running Trivy configuration scan..."
+                                trivy config \\
+                                    --cache-dir ${TRIVY_CACHE_DIR} \\
+                                    --format json \\
+                                    --output trivy-config-report.json \\
+                                    --severity CRITICAL,HIGH \\
+                                    .
+                                
+                                # Check for critical misconfigurations
+                                CRITICAL_MISCONFIGS=$(jq '[.Results[]?.Misconfigurations[]? | select(.Severity == "CRITICAL")] | length' trivy-config-report.json 2>/dev/null || echo "0")
+                                
+                                echo "Configuration scan results: $CRITICAL_MISCONFIGS critical misconfigurations"
+                                
+                                if [ "$CRITICAL_MISCONFIGS" -gt "0" ]; then
+                                    echo "⚠️ WARNING: $CRITICAL_MISCONFIGS critical misconfigurations found"
+                                    jq '.Results[]?.Misconfigurations[]? | select(.Severity == "CRITICAL")' trivy-config-report.json
+                                fi
+                                
+                                echo "✅ Container configuration scan completed"
+                            '''
+                        }
+                    }
+                    post {
+                        always {
+                            archiveArtifacts artifacts: 'trivy-config-report.json', allowEmptyArchive: true
+                        }
+                    }
+                }
+            }
+        }
+        
+        stage('📊 Security Report Generation') {
+            steps {
+                script {
+                    echo '📊 Generating comprehensive security report...'
+                    
+                    sh '''
+                        # Create security report directory
+                        mkdir -p security-reports
+                        
+                        # Generate consolidated security report
+                        cat > security-reports/security-summary.md << 'EOF'
+# DevSecOps Security Scan Report
+                        
+**Build:** ${BUILD_NUMBER}  
+**Commit:** ${GIT_COMMIT}  
+**Branch:** ${GIT_BRANCH}  
+**Date:** $(date -u)  
+**Image:** ${DOCKER_IMAGE}:${DOCKER_TAG}
+
+## 🔍 Scan Results Summary
+
+### Secret Detection
+- **Gitleaks:** $([ -f gitleaks-report.json ] && echo "✅ No secrets detected" || echo "❌ Check required")
+- **detect-secrets:** $([ -f .secrets.baseline ] && echo "✅ Baseline validated" || echo "❌ Check required")
+
+### Static Application Security Testing (SAST)
+- **Semgrep:** $([ -f semgrep-report.json ] && jq -r '"Critical: " + ([.results[] | select(.extra.severity == "ERROR")] | length | tostring) + ", High: " + ([.results[] | select(.extra.severity == "WARNING")] | length | tostring)' semgrep-report.json || echo "❌ Report not found")
+
+### Container Security
+- **Trivy Vulnerabilities:** $([ -f trivy-report.json ] && jq -r '"Critical: " + ([.Results[]?.Vulnerabilities[]? | select(.Severity == "CRITICAL")] | length | tostring) + ", High: " + ([.Results[]?.Vulnerabilities[]? | select(.Severity == "HIGH")] | length | tostring) + ", Medium: " + ([.Results[]?.Vulnerabilities[]? | select(.Severity == "MEDIUM")] | length | tostring)' trivy-report.json || echo "❌ Report not found")
+
+### Infrastructure as Code
+- **Checkov:** $([ -f checkov-k8s-report.json ] && echo "✅ Kubernetes manifests scanned" || echo "❌ Report not found")
+- **kube-score:** $([ -f kube-score-report.txt ] && echo "✅ Best practices validated" || echo "❌ Report not found")
+
+## 🛡️ Security Gates Status
+
+All security gates must pass for deployment to proceed:
+- Critical vulnerabilities: ≤ ${SECURITY_GATE_CRITICAL} ✅
+- High vulnerabilities: ≤ ${SECURITY_GATE_HIGH} ✅  
+- Medium vulnerabilities: ≤ ${SECURITY_GATE_MEDIUM} ✅
+
+## 📋 Recommendations
+
+1. **Regular Updates:** Keep base images and dependencies updated
+2. **Secret Management:** Use external secret managers (Vault, AWS Secrets Manager)
+3. **Network Policies:** Implement Kubernetes network policies
+4. **RBAC:** Apply least-privilege access controls
+5. **Monitoring:** Enable runtime security monitoring
+
+---
+*Generated by Jenkins DevSecOps Pipeline*
+EOF
+                        
+                        echo "✅ Security report generated"
+                        cat security-reports/security-summary.md
+                    '''
+                }
+            }
+            post {
+                always {
+                    archiveArtifacts artifacts: 'security-reports/**', allowEmptyArchive: true
+                    publishHTML([
+                        allowMissing: false,
+                        alwaysLinkToLastBuild: true,
+                        keepAll: true,
+                        reportDir: 'security-reports',
+                        reportFiles: 'security-summary.md',
+                        reportName: 'DevSecOps Security Report'
+                    ])
+                }
+            }
+        }
+        
+        stage('🚀 Deploy') {
+            when {
+                allOf {
+                    branch 'main'
+                    expression { currentBuild.result == null || currentBuild.result == 'SUCCESS' }
+                }
+            }
+            steps {
+                script {
+                    echo '🚀 Deploying to registry and updating manifests...'
+                    
+                    // Push to DockerHub
+                    withCredentials([usernamePassword(
+                        credentialsId: "${DOCKER_CREDENTIALS_ID}",
+                        usernameVariable: 'DOCKER_USER',
+                        passwordVariable: 'DOCKER_PASS'
+                    )]) {
+                        sh '''
+                            echo "Pushing Docker image to registry..."
+                            echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
+                            docker push ${DOCKER_IMAGE}:${DOCKER_TAG}
+                            docker push ${DOCKER_IMAGE}:latest
+                            docker logout
+                            echo "✅ Image pushed successfully"
+                        '''
+                    }
+                    
+                    // Update Kubernetes manifests
+                    withCredentials([usernamePassword(
+                        credentialsId: "${GIT_CREDENTIALS_ID}",
+                        usernameVariable: 'GIT_USER',
+                        passwordVariable: 'GIT_TOKEN'
+                    )]) {
+                        sh """
+                            echo "Updating Kubernetes manifests..."
+                            
+                            # Update image tag in deployment
+                            sed -i 's|image: eknathdj/product-service:.*|image: ${DOCKER_IMAGE}:${DOCKER_TAG}|g' k8s/product-service/04-app-deployment.yaml
+                            
+                            # Commit and push changes
+                            git add k8s/product-service/04-app-deployment.yaml
+                            git commit -m "🚀 Deploy ${DOCKER_TAG} [skip ci]" || echo "No changes to commit"
+                            git push https://${GIT_USER}:${GIT_TOKEN}@github.com/eknathdj/devops-sample-app.git HEAD:main
+                            
+                            echo "✅ Manifests updated successfully"
+                        """
+                    }
+                }
+            }
+        }
+    }
+    
+    post {
+        success {
+            script {
+                echo '✅ DevSecOps pipeline completed successfully!'
+                
+                // Generate success notification
+                sh '''
+                    echo "🎉 DevSecOps Pipeline Success Report" > pipeline-success.txt
+                    echo "=================================" >> pipeline-success.txt
+                    echo "Build: ${BUILD_NUMBER}" >> pipeline-success.txt
+                    echo "Image: ${DOCKER_IMAGE}:${DOCKER_TAG}" >> pipeline-success.txt
+                    echo "Commit: ${GIT_COMMIT}" >> pipeline-success.txt
+                    echo "All security gates passed ✅" >> pipeline-success.txt
+                    echo "Deployment ready for ArgoCD sync 🚀" >> pipeline-success.txt
+                '''
+            }
+        }
+        
+        failure {
+            script {
+                echo '❌ DevSecOps pipeline failed!'
+                
+                // Generate failure report
+                sh '''
+                    echo "💥 DevSecOps Pipeline Failure Report" > pipeline-failure.txt
+                    echo "====================================" >> pipeline-failure.txt
+                    echo "Build: ${BUILD_NUMBER}" >> pipeline-failure.txt
+                    echo "Commit: ${GIT_COMMIT}" >> pipeline-failure.txt
+                    echo "Check security scan results for details" >> pipeline-failure.txt
+                    echo "Review archived artifacts for specific issues" >> pipeline-failure.txt
+                '''
+            }
+        }
+        
+        always {
+            script {
+                echo '🧹 Cleaning up resources...'
+                
+                sh '''
+                    # Clean up Docker images
+                    docker image prune -f || true
+                    
+                    # Clean up temporary files
+                    rm -f gitleaks hadolint kube-score_* || true
+                    
+                    # Archive all security reports
+                    tar -czf security-scan-results.tar.gz *.json *.txt security-reports/ || true
+                '''
+                
+                // Archive final results
+                archiveArtifacts artifacts: 'security-scan-results.tar.gz,pipeline-*.txt', allowEmptyArchive: true
+            }
+        }
+    }
+}

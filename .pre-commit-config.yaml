@@ -1,14 +1,60 @@
 repos:
+  # Secret Detection
   - repo: https://github.com/Yelp/detect-secrets
     rev: v1.4.0
     hooks:
       - id: detect-secrets
         args: ['--baseline', '.secrets.baseline']
+        exclude: package-lock.json
+  
   - repo: https://github.com/zricethezav/gitleaks
     rev: v8.18.0
     hooks:
       - id: gitleaks
         name: gitleaks
-        entry: gitleaks detect
+        entry: gitleaks detect --source .
         language: system
-        files: '\.(yaml|yml|json|env|sh)$'
+        pass_filenames: false
+
+  # Code Quality & Security
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.4.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-json
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: ['--maxkb=500']
+      - id: detect-private-key
+
+  # Dockerfile Security
+  - repo: https://github.com/hadolint/hadolint
+    rev: v2.12.0
+    hooks:
+      - id: hadolint-docker
+        args: ['--ignore', 'DL3008', '--ignore', 'DL3009']
+
+  # YAML Security
+  - repo: https://github.com/adrienverge/yamllint
+    rev: v1.32.0
+    hooks:
+      - id: yamllint
+        args: [-c=.yamllint.yaml]
+
+  # Kubernetes Security
+  - repo: https://github.com/zegl/kube-score
+    rev: v1.16.1
+    hooks:
+      - id: kube-score
+        files: k8s/.*\.yaml$
+        args: ['--ignore-test', 'pod-networkpolicy']
+
+  # Infrastructure as Code Security
+  - repo: https://github.com/bridgecrewio/checkov
+    rev: 2.4.9
+    hooks:
+      - id: checkov
+        args: [--framework, dockerfile, kubernetes, --quiet]
+        files: \.(yaml|yml|json|dockerfile|tf)$$'

@@ -1,0 +1,107 @@
+# Gitleaks configuration file for secret detection
+# https://github.com/zricethezav/gitleaks
+
+title = "DevSecOps Gitleaks Config"
+
+[extend]
+# Extend default configuration
+useDefault = true
+
+[[rules]]
+id = "aws-access-key-id"
+description = "AWS Access Key ID"
+regex = '''AKIA[0-9A-Z]{16}'''
+tags = ["key", "AWS"]
+
+[[rules]]
+id = "aws-secret-access-key"
+description = "AWS Secret Access Key"
+regex = '''[A-Za-z0-9/+=]{40}'''
+tags = ["key", "AWS"]
+
+[[rules]]
+id = "github-pat"
+description = "GitHub Personal Access Token"
+regex = '''ghp_[0-9a-zA-Z]{36}'''
+tags = ["key", "GitHub"]
+
+[[rules]]
+id = "github-oauth"
+description = "GitHub OAuth Access Token"
+regex = '''gho_[0-9a-zA-Z]{36}'''
+tags = ["key", "GitHub"]
+
+[[rules]]
+id = "docker-hub-token"
+description = "Docker Hub Access Token"
+regex = '''dckr_pat_[a-zA-Z0-9_-]{36}'''
+tags = ["key", "Docker"]
+
+[[rules]]
+id = "generic-api-key"
+description = "Generic API Key"
+regex = '''(?i)(api[_-]?key|apikey)['"]*\s*[:=]\s*['"][a-zA-Z0-9_-]{20,}['"]'''
+tags = ["key", "API"]
+
+[[rules]]
+id = "password-in-url"
+description = "Password in URL"
+regex = '''[a-zA-Z]{3,10}://[^/\s:@]{3,20}:[^/\s:@]{3,20}@.{1,100}'''
+tags = ["key", "URL"]
+
+[[rules]]
+id = "private-key"
+description = "Private Key"
+regex = '''-----BEGIN [A-Z]+ PRIVATE KEY-----'''
+tags = ["key", "private"]
+
+[[rules]]
+id = "jwt-token"
+description = "JWT Token"
+regex = '''eyJ[A-Za-z0-9_-]*\.eyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]*'''
+tags = ["key", "JWT"]
+
+# Allowlist for false positives
+[allowlist]
+description = "Global allowlist"
+paths = [
+    '''.*_test\..*''',
+    '''.*\.test\..*''',
+    '''.*/tests/.*''',
+    '''.*/test/.*''',
+    '''.gitleaks.toml''',
+    '''.*\.md''',
+    '''.*\.txt''',
+    '''LICENSE''',
+    '''.*\.lock''',
+    '''.*\.sum''',
+]
+
+regexes = [
+    '''example''',
+    '''template''',
+    '''placeholder''',
+    '''your-.*-here''',
+    '''replace-.*''',
+    '''<.*>''',
+    '''\$\{.*\}''',
+]
+
+commits = [
+    # Add commit hashes to ignore (if needed)
+]
+
+# Entropy detection for high-entropy strings
+[[rules]]
+id = "high-entropy-base64"
+description = "High entropy base64 string"
+regex = '''[A-Za-z0-9+/]{20,}={0,2}'''
+entropy = 4.5
+tags = ["entropy", "base64"]
+
+[[rules]]
+id = "high-entropy-hex"
+description = "High entropy hex string"
+regex = '''[a-fA-F0-9]{20,}'''
+entropy = 3.5
+tags = ["entropy", "hex"]
